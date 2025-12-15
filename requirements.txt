@@ -5,6 +5,11 @@
 # HTTP client
 httpx>=0.25.0
 
+# Web3 / Blockchain (for copy trading)
+web3>=6.0.0
+eth-account>=0.10.0
+eth-abi>=4.0.0
+
 # Data manipulation
 pandas>=2.0.0
 numpy>=1.24.0
