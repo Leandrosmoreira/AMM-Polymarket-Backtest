@@ -1,0 +1,19 @@
+[Unit]
+Description=Polymarket Copy Trading Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/AMM-Polymarket-Backtest
+Environment=PATH=/root/AMM-Polymarket-Backtest/venv/bin
+ExecStart=/root/AMM-Polymarket-Backtest/venv/bin/python copytrade.py monitor --live
+Restart=always
+RestartSec=10
+
+# Logs
+StandardOutput=append:/var/log/copytrade.log
+StandardError=append:/var/log/copytrade.log
+
+[Install]
+WantedBy=multi-user.target
