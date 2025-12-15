@@ -14,18 +14,20 @@ Usage:
     python copytrade.py history                    # Show trade history
 
 Configuration:
-    Edit config/copytrade_settings.py to configure:
-    - Target wallet to monitor
-    - Copy percentage (default 10%)
-    - Risk limits
-    - RPC endpoints
+    1. Copy .env.example to .env
+    2. Edit .env with your private key
+    3. Optionally edit config/copytrade_settings.py for other settings
 
-Environment Variables:
+Environment Variables (via .env file):
     POLY_PRIVATE_KEY - Your wallet private key (required for live trading)
     POLYGON_RPC_URL  - Custom RPC URL (optional)
 """
 
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 import sys
 import json
 import signal
