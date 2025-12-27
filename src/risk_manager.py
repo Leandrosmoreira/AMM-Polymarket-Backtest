@@ -257,6 +257,10 @@ class RiskManager:
         Returns:
             True if stop loss triggered
         """
+        # Guard against division by zero
+        if position.total_cost <= 0:
+            return False
+
         current_value = position.current_value(market_state)
         loss_pct = (position.total_cost - current_value) / position.total_cost
 
