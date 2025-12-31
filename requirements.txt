@@ -1,9 +1,12 @@
-# AMM Delta-Neutral Strategy Backtest
-# Polymarket SOL 15-min Markets
+# AMM Strategy Backtest
+# Polymarket BTC/SOL 15-min Markets
 # Requirements
 
 # HTTP client
 httpx>=0.25.0
+
+# WebSocket support (for real-time data)
+websockets>=12.0
 
 # Data manipulation
 pandas>=2.0.0
