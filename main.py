@@ -32,6 +32,15 @@ from src.log_processor import (
     print_analysis_summary,
     generate_synthetic_token_prices,
 )
+from src.gabagool import (
+    GabagoolConfig,
+    GabagoolBot,
+    GabagoolBacktest,
+    run_gabagool_backtest,
+    CONSERVATIVE_CONFIG,
+    MODERATE_CONFIG,
+    AGGRESSIVE_CONFIG,
+)
 
 # Setup logging
 logging.basicConfig(
@@ -299,6 +308,30 @@ def main():
     btc_analyze_parser.add_argument('--logs', type=str, nargs='+', help='Path(s) to log files')
     btc_analyze_parser.add_argument('--log-dir', type=str, help='Directory with log files')
 
+    # === GABAGOOL SPREAD CAPTURE COMMANDS ===
+
+    # Gabagool Backtest command
+    gab_backtest_parser = subparsers.add_parser('gabagool-backtest', help='Run Gabagool spread capture backtest')
+    gab_backtest_parser.add_argument('--markets', type=int, default=100, help='Number of markets to simulate')
+    gab_backtest_parser.add_argument('--min-spread', type=float, default=0.02, help='Min spread threshold (0.02=2%)')
+    gab_backtest_parser.add_argument('--order-size', type=float, default=15.0, help='Order size in USD')
+    gab_backtest_parser.add_argument('--max-per-market', type=float, default=500.0, help='Max USD per market')
+    gab_backtest_parser.add_argument('--preset', type=str, choices=['conservative', 'moderate', 'aggressive'], help='Use preset config')
+    gab_backtest_parser.add_argument('--no-save', action='store_true', help='Do not save results')
+
+    # Gabagool Bot command (paper trading)
+    gab_bot_parser = subparsers.add_parser('gabagool-bot', help='Run Gabagool bot (paper trading)')
+    gab_bot_parser.add_argument('--live', action='store_true', help='Enable live trading (requires API keys)')
+    gab_bot_parser.add_argument('--min-spread', type=float, default=0.02, help='Min spread threshold')
+    gab_bot_parser.add_argument('--order-size', type=float, default=15.0, help='Order size in USD')
+    gab_bot_parser.add_argument('--max-per-market', type=float, default=500.0, help='Max USD per market')
+    gab_bot_parser.add_argument('--assets', nargs='+', default=['BTC', 'ETH'], help='Assets to trade')
+    gab_bot_parser.add_argument('--preset', type=str, choices=['conservative', 'moderate', 'aggressive'], help='Use preset config')
+
+    # Gabagool Quick Test
+    gab_test_parser = subparsers.add_parser('gabagool-test', help='Quick test of Gabagool strategy')
+    gab_test_parser.add_argument('--markets', type=int, default=50, help='Number of markets')
+
     args = parser.parse_args()
 
     if args.command == 'collect':
@@ -315,6 +348,12 @@ def main():
         run_btc_test(args)
     elif args.command == 'btc-analyze':
         run_btc_analyze(args)
+    elif args.command == 'gabagool-backtest':
+        run_gabagool_backtest_cmd(args)
+    elif args.command == 'gabagool-bot':
+        run_gabagool_bot_cmd(args)
+    elif args.command == 'gabagool-test':
+        run_gabagool_test_cmd(args)
     else:
         parser.print_help()
 
@@ -585,6 +624,107 @@ def run_btc_analyze(args):
         print(f"Duration: {last_ts - first_ts}")
 
     print("=" * 60)
+
+
+# === GABAGOOL COMMANDS ===
+
+def run_gabagool_backtest_cmd(args):
+    """Run Gabagool spread capture strategy backtest."""
+    logger.info("Starting Gabagool spread capture backtest...")
+
+    # Get config
+    if args.preset == 'conservative':
+        config = CONSERVATIVE_CONFIG
+    elif args.preset == 'aggressive':
+        config = AGGRESSIVE_CONFIG
+    elif args.preset == 'moderate':
+        config = MODERATE_CONFIG
+    else:
+        config = GabagoolConfig(
+            MIN_SPREAD=args.min_spread,
+            ORDER_SIZE_USD=args.order_size,
+            MAX_PER_MARKET=args.max_per_market,
+        )
+
+    # Run backtest
+    backtest = GabagoolBacktest(config=config)
+    result = backtest.run_backtest(num_markets=args.markets)
+    backtest.print_results(result)
+
+    if not args.no_save:
+        backtest.save_results(result)
+
+    return result
+
+
+def run_gabagool_bot_cmd(args):
+    """Run Gabagool bot (paper or live trading)."""
+    import asyncio
+
+    # Get config
+    if args.preset == 'conservative':
+        config = CONSERVATIVE_CONFIG
+    elif args.preset == 'aggressive':
+        config = AGGRESSIVE_CONFIG
+    elif args.preset == 'moderate':
+        config = MODERATE_CONFIG
+    else:
+        config = GabagoolConfig(
+            MIN_SPREAD=args.min_spread,
+            ORDER_SIZE_USD=args.order_size,
+            MAX_PER_MARKET=args.max_per_market,
+            ENABLED_ASSETS=args.assets,
+        )
+
+    # Set trading mode
+    config.PAPER_TRADING = not args.live
+
+    if args.live:
+        logger.warning("=" * 50)
+        logger.warning("LIVE TRADING MODE ENABLED")
+        logger.warning("Real money will be used!")
+        logger.warning("=" * 50)
+
+        # Validate API credentials
+        if not config.PRIVATE_KEY or not config.API_KEY:
+            logger.error("API credentials required for live trading")
+            logger.error("Set environment variables: POLYMARKET_PRIVATE_KEY, POLYMARKET_API_KEY, etc.")
+            return
+
+        response = input("Are you sure you want to continue? (yes/no): ")
+        if response.lower() != 'yes':
+            logger.info("Cancelled by user")
+            return
+
+    logger.info("=" * 50)
+    logger.info("GABAGOOL BOT")
+    logger.info(f"Mode: {'LIVE' if args.live else 'PAPER TRADING'}")
+    logger.info(f"Min Spread: {config.MIN_SPREAD * 100:.1f}%")
+    logger.info(f"Order Size: ${config.ORDER_SIZE_USD}")
+    logger.info(f"Assets: {config.ENABLED_ASSETS}")
+    logger.info("=" * 50)
+
+    # Run bot
+    from src.gabagool import run_bot
+    asyncio.run(run_bot(config))
+
+
+def run_gabagool_test_cmd(args):
+    """Quick test of Gabagool strategy with simulated data."""
+    logger.info("Running Gabagool quick test...")
+
+    config = GabagoolConfig(
+        MIN_SPREAD=0.02,
+        ORDER_SIZE_USD=15.0,
+        MAX_PER_MARKET=500.0,
+    )
+
+    backtest = GabagoolBacktest(config=config)
+    result = backtest.run_backtest(num_markets=args.markets)
+    backtest.print_results(result)
+
+    logger.info("Gabagool test complete!")
+    return result
 
 
 if __name__ == '__main__':

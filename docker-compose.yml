@@ -1,4 +1,4 @@
-# Docker Compose for BTC Trading Bot
+# Docker Compose for BTC Trading Bot & Gabagool Spread Capture
 # Polymarket BTC Up/Down 15min Markets
 
 version: '3.8'
@@ -69,6 +69,86 @@ services:
       --log-dir /app/data/raw
     volumes:
       - ./data:/app/data
+    environment:
+      - TZ=UTC
+
+  # === GABAGOOL SPREAD CAPTURE SERVICES ===
+
+  # Gabagool Bot - Paper Trading (runs 24/7)
+  gabagool-paper:
+    build: .
+    container_name: gabagool-paper
+    restart: unless-stopped
+    profiles:
+      - gabagool-paper
+    command: >
+      python main.py gabagool-bot
+      --min-spread 0.02
+      --order-size 15
+      --max-per-market 500
+      --assets BTC ETH
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=UTC
+      - PYTHONUNBUFFERED=1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Gabagool Bot - Live Trading (runs 24/7)
+  gabagool-live:
+    build: .
+    container_name: gabagool-live
+    restart: unless-stopped
+    profiles:
+      - gabagool-live
+    command: >
+      python main.py gabagool-bot
+      --live
+      --preset moderate
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=UTC
+      - PYTHONUNBUFFERED=1
+      - POLYMARKET_PRIVATE_KEY=${POLYMARKET_PRIVATE_KEY}
+      - POLYMARKET_API_KEY=${POLYMARKET_API_KEY}
+      - POLYMARKET_API_SECRET=${POLYMARKET_API_SECRET}
+      - POLYMARKET_API_PASSPHRASE=${POLYMARKET_API_PASSPHRASE}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Gabagool Backtest (on-demand)
+  gabagool-backtest:
+    build: .
+    container_name: gabagool-backtest
+    profiles:
+      - gabagool-backtest
+    command: >
+      python main.py gabagool-backtest
+      --markets 200
+      --min-spread 0.02
+      --order-size 15
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=UTC
+
+  # Gabagool Quick Test (on-demand)
+  gabagool-test:
+    build: .
+    container_name: gabagool-test
+    profiles:
+      - gabagool-test
+    command: >
+      python main.py gabagool-test
+      --markets 50
     environment:
       - TZ=UTC
 
