@@ -1,0 +1,77 @@
+# Docker Compose for BTC Trading Bot
+# Polymarket BTC Up/Down 15min Markets
+
+version: '3.8'
+
+services:
+  # Real-time Data Collector (runs 24/7)
+  collector:
+    build: .
+    container_name: btc-collector
+    restart: unless-stopped
+    command: >
+      python -m src.realtime_collector
+      --output /app/data/raw
+      --save-interval 300
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=UTC
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; print('ok')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Backtest Runner (on-demand)
+  backtest:
+    build: .
+    container_name: btc-backtest
+    profiles:
+      - backtest
+    command: >
+      python main.py btc-backtest
+      --log-dir /app/data/raw
+      --capital 100
+      --output /app/data/results
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=UTC
+
+  # Quick Test (on-demand)
+  test:
+    build: .
+    container_name: btc-test
+    profiles:
+      - test
+    command: >
+      python main.py btc-test
+      --markets 50
+      --capital 100
+    environment:
+      - TZ=UTC
+
+  # Analysis (on-demand)
+  analyze:
+    build: .
+    container_name: btc-analyze
+    profiles:
+      - analyze
+    command: >
+      python main.py btc-analyze
+      --log-dir /app/data/raw
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=UTC
+
+volumes:
+  data:
+    driver: local

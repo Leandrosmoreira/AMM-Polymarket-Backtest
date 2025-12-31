@@ -1,0 +1,42 @@
+# Docker ignore file
+.git
+.gitignore
+*.md
+!requirements.txt
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+env/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data (mounted as volume)
+data/
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Tests
+tests/
+pytest.ini
+.coverage
+htmlcov/
