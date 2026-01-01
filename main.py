@@ -328,6 +328,9 @@ def main():
     gab_backtest_parser.add_argument('--order-size', type=float, default=15.0, help='Order size in USD')
     gab_backtest_parser.add_argument('--max-per-market', type=float, default=500.0, help='Max USD per market')
     gab_backtest_parser.add_argument('--preset', type=str, choices=['conservative', 'moderate', 'aggressive'], help='Use preset config')
+    gab_backtest_parser.add_argument('--order-type', choices=['maker', 'taker'], default='maker',
+                                     help='Order type: maker (0%% fee) or taker (2%% fee)')
+    gab_backtest_parser.add_argument('--fee', type=float, default=None, help='Custom fee rate (overrides order-type)')
     gab_backtest_parser.add_argument('--no-save', action='store_true', help='Do not save results')
 
     # Gabagool Bot command (paper trading)
@@ -362,6 +365,9 @@ def main():
     vol_backtest_parser.add_argument('--data', type=str, default='data/raw', help='Path to data file or directory')
     vol_backtest_parser.add_argument('--balance', type=float, default=1000.0, help='Initial balance')
     vol_backtest_parser.add_argument('--min-edge', type=float, default=3.0, help='Min edge % to trade')
+    vol_backtest_parser.add_argument('--order-type', choices=['maker', 'taker'], default='maker',
+                                     help='Order type: maker (0%% fee) or taker (2%% fee)')
+    vol_backtest_parser.add_argument('--fee', type=float, default=None, help='Custom fee rate (overrides order-type)')
     vol_backtest_parser.add_argument('--output', type=str, help='Output directory for results')
 
     args = parser.parse_args()
@@ -684,8 +690,23 @@ def run_gabagool_backtest_cmd(args):
             MAX_PER_MARKET=args.max_per_market,
         )
 
+    # Get fee settings
+    order_type = getattr(args, 'order_type', 'maker')
+    custom_fee = getattr(args, 'fee', None)
+
+    logger.info(f"Order Type:  {order_type.upper()}")
+    if custom_fee is not None:
+        logger.info(f"Custom Fee:  {custom_fee * 100:.1f}%")
+    else:
+        fee_rate = 0.0 if order_type == 'maker' else 0.02
+        logger.info(f"Fee Rate:    {fee_rate * 100:.1f}%")
+
     # Run backtest
-    backtest = GabagoolBacktest(config=config)
+    backtest = GabagoolBacktest(
+        config=config,
+        order_type=order_type,
+        custom_fee=custom_fee
+    )
     result = backtest.run_backtest(num_markets=args.markets)
     backtest.print_results(result)
 
@@ -848,9 +869,19 @@ def run_vol_backtest_cmd(args):
         logger.info("Make sure to collect data first with the collector")
         return
 
+    # Get fee settings
+    order_type = getattr(args, 'order_type', 'maker')
+    custom_fee = getattr(args, 'fee', None)
+
     logger.info(f"Data Path:   {data_path}")
     logger.info(f"Balance:     ${args.balance}")
     logger.info(f"Min Edge:    {args.min_edge}%")
+    logger.info(f"Order Type:  {order_type.upper()}")
+    if custom_fee is not None:
+        logger.info(f"Custom Fee:  {custom_fee * 100:.1f}%")
+    else:
+        fee_rate = 0.0 if order_type == 'maker' else 0.02
+        logger.info(f"Fee Rate:    {fee_rate * 100:.1f}%")
     logger.info("=" * 60)
 
     # Run backtest
@@ -858,6 +889,8 @@ def run_vol_backtest_cmd(args):
         data_path=data_path,
         initial_balance=args.balance,
         min_edge_pct=args.min_edge,
+        order_type=order_type,
+        custom_fee=custom_fee,
         verbose=True
     )
 

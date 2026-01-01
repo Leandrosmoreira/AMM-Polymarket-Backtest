@@ -5,7 +5,7 @@ Simulates the spread capture strategy with historical or generated data
 
 import random
 import time
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import json
@@ -16,6 +16,12 @@ from .config import GabagoolConfig
 from .position_manager import GabagoolPositionManager, PositionSide, MarketPosition
 
 logger = logging.getLogger(__name__)
+
+
+class OrderType:
+    """Order type for fee calculation."""
+    MAKER = "maker"  # Limit order - 0% fee
+    TAKER = "taker"  # Market order - ~2% fee
 
 
 @dataclass
@@ -65,6 +71,10 @@ class BacktestResult:
     max_exposure: float
     sharpe_ratio: float
 
+    # Fee tracking
+    order_type: str = "maker"
+    fee_rate: float = 0.0
+
     # Details
     markets: List[Dict[str, Any]] = field(default_factory=list)
     trades: List[Dict[str, Any]] = field(default_factory=list)
@@ -90,6 +100,8 @@ class BacktestResult:
             'max_drawdown': self.max_drawdown,
             'max_exposure': self.max_exposure,
             'sharpe_ratio': self.sharpe_ratio,
+            'order_type': self.order_type,
+            'fee_rate': self.fee_rate,
         }
 
 
@@ -181,13 +193,27 @@ class GabagoolBacktest:
     4. Track positions and calculate P&L at settlement
     """
 
+    # Fee rates by order type
+    MAKER_FEE = 0.0   # 0% for limit orders
+    TAKER_FEE = 0.02  # 2% for market orders
+
     def __init__(
         self,
         config: GabagoolConfig = None,
-        fee_rate: float = 0.0,  # Polymarket has no fees
+        order_type: str = "maker",  # "maker" or "taker"
+        custom_fee: Optional[float] = None,  # Override fee rate
     ):
         self.config = config or GabagoolConfig()
-        self.fee_rate = fee_rate
+        self.order_type = order_type
+
+        # Set fee rate based on order type
+        if custom_fee is not None:
+            self.fee_rate = custom_fee
+        elif order_type == OrderType.MAKER:
+            self.fee_rate = self.MAKER_FEE
+        else:
+            self.fee_rate = self.TAKER_FEE
+
         self.simulator = SpreadSimulator()
 
         # State
@@ -496,6 +522,8 @@ class GabagoolBacktest:
             max_drawdown=max_drawdown,
             max_exposure=max(self._exposure_curve) if self._exposure_curve else 0,
             sharpe_ratio=sharpe,
+            order_type=self.order_type,
+            fee_rate=self.fee_rate,
             markets=[m.__dict__ for m in self.markets[:10]],  # First 10 for detail
             trades=self.all_trades[:100],  # First 100 trades
         )
@@ -575,6 +603,13 @@ class GabagoolBacktest:
         print(f"Max Exposure: ${result.max_exposure:,.2f}")
         print(f"Max Drawdown: ${result.max_drawdown:,.2f}")
 
+        print("\n--- Fees ---")
+        print(f"Order Type: {result.order_type.upper()}")
+        print(f"Fee Rate: {result.fee_rate * 100:.1f}%")
+        print(f"Total Fees Paid: ${result.fees_paid:.2f}")
+        if result.total_trades > 0:
+            print(f"Avg Fee/Trade: ${result.fees_paid / result.total_trades:.2f}")
+
         # Profitability indicator
         print("\n" + "=" * 70)
         if result.net_profit > 0:
@@ -601,6 +636,8 @@ class GabagoolBacktest:
 def run_backtest(
     num_markets: int = 100,
     config: GabagoolConfig = None,
+    order_type: str = "maker",
+    custom_fee: Optional[float] = None,
     save_results: bool = True,
 ) -> BacktestResult:
     """
@@ -609,12 +646,18 @@ def run_backtest(
     Args:
         num_markets: Number of markets to simulate
         config: Configuration (uses default if None)
+        order_type: "maker" (0% fee) or "taker" (2% fee)
+        custom_fee: Optional custom fee rate (overrides order_type)
         save_results: Whether to save results to file
 
     Returns:
         BacktestResult
     """
-    backtest = GabagoolBacktest(config=config)
+    backtest = GabagoolBacktest(
+        config=config,
+        order_type=order_type,
+        custom_fee=custom_fee
+    )
     result = backtest.run_backtest(num_markets=num_markets)
     backtest.print_results(result)
 
@@ -631,6 +674,9 @@ if __name__ == '__main__':
     parser.add_argument('--markets', type=int, default=100, help='Number of markets to simulate')
     parser.add_argument('--min-spread', type=float, default=0.02, help='Minimum spread threshold')
     parser.add_argument('--order-size', type=float, default=15.0, help='Order size in USD')
+    parser.add_argument('--order-type', choices=['maker', 'taker'], default='maker',
+                        help='Order type: maker (0%% fee) or taker (2%% fee)')
+    parser.add_argument('--fee', type=float, default=None, help='Custom fee rate (overrides order-type)')
     parser.add_argument('--no-save', action='store_true', help='Do not save results')
     args = parser.parse_args()
 
@@ -647,5 +693,7 @@ if __name__ == '__main__':
     run_backtest(
         num_markets=args.markets,
         config=config,
+        order_type=args.order_type,
+        custom_fee=args.fee,
         save_results=not args.no_save,
     )

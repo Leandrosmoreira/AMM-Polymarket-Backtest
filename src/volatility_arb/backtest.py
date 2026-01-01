@@ -21,6 +21,12 @@ from .risk_manager import RiskConfig, MODERATE_RISK
 logger = logging.getLogger(__name__)
 
 
+class OrderType:
+    """Order type for fee calculation."""
+    MAKER = "maker"  # Limit order - 0% fee
+    TAKER = "taker"  # Market order - ~2% fee
+
+
 @dataclass
 class BacktestTrade:
     """A trade in the backtest."""
@@ -36,6 +42,8 @@ class BacktestTrade:
     edge_pct: float
     volatility: float
     time_remaining: int
+    order_type: str = "maker"  # maker or taker
+    fee_paid: float = 0.0  # Fee paid on entry
 
     # Settlement
     settled: bool = False
@@ -52,6 +60,7 @@ class BacktestResult:
     wins: int = 0
     losses: int = 0
     total_pnl: float = 0.0
+    total_fees: float = 0.0  # Total fees paid
 
     # Capital
     initial_balance: float = 1000.0
@@ -70,6 +79,10 @@ class BacktestResult:
     avg_edge_taken: float = 0.0
     max_edge_seen: float = 0.0
     edges_above_threshold: int = 0
+
+    # Fee stats
+    order_type: str = "maker"
+    fee_rate: float = 0.0
 
     # Data stats
     total_ticks: int = 0
@@ -91,6 +104,10 @@ class VolatilityArbBacktest:
     Uses real collected data to simulate trading performance.
     """
 
+    # Fee rates by order type
+    MAKER_FEE = 0.0  # 0% for limit orders
+    TAKER_FEE = 0.02  # 2% for market orders
+
     def __init__(
         self,
         initial_balance: float = 1000.0,
@@ -98,12 +115,23 @@ class VolatilityArbBacktest:
         risk_config: Optional[RiskConfig] = None,
         use_momentum: bool = True,
         market_duration_seconds: int = 900,  # 15 minutes
+        order_type: str = "maker",  # "maker" or "taker"
+        custom_fee: Optional[float] = None,  # Override fee rate
     ):
         self.initial_balance = initial_balance
         self.min_edge_pct = min_edge_pct
         self.risk_config = risk_config or MODERATE_RISK
         self.use_momentum = use_momentum
         self.market_duration_seconds = market_duration_seconds
+        self.order_type = order_type
+
+        # Set fee rate based on order type
+        if custom_fee is not None:
+            self.fee_rate = custom_fee
+        elif order_type == OrderType.MAKER:
+            self.fee_rate = self.MAKER_FEE
+        else:
+            self.fee_rate = self.TAKER_FEE
 
         # Components
         self.volatility = VolatilityCalculator(
@@ -119,7 +147,7 @@ class VolatilityArbBacktest:
         self.edge_detector = EdgeDetector(
             min_edge_percent=min_edge_pct,
             min_confidence=0.4,
-            fee_percent=1.0
+            fee_percent=self.fee_rate * 100  # Convert to percentage
         )
 
     def load_data(self, data_path: str) -> Dict[str, Any]:
@@ -311,7 +339,11 @@ class VolatilityArbBacktest:
                         # Execute trade
                         direction = "up" if edge.signal == TradeSignal.BUY_UP else "down"
                         entry_price = market_prices.up_price if direction == "up" else market_prices.down_price
-                        tokens = size_usd / entry_price
+
+                        # Calculate fee
+                        fee_amount = size_usd * self.fee_rate
+                        size_after_fee = size_usd - fee_amount
+                        tokens = size_after_fee / entry_price
 
                         trade = BacktestTrade(
                             trade_id=trade_id,
@@ -325,11 +357,14 @@ class VolatilityArbBacktest:
                             market_price=edge.market_price,
                             edge_pct=edge.edge_percent,
                             volatility=vol_metrics.rolling_std,
-                            time_remaining=time_remaining
+                            time_remaining=time_remaining,
+                            order_type=self.order_type,
+                            fee_paid=fee_amount
                         )
 
                         open_positions.append(trade)
-                        balance -= size_usd
+                        balance -= size_usd  # Full amount deducted (includes fee)
+                        result.total_fees += fee_amount
                         trade_id += 1
 
                         result.avg_edge_taken = (
@@ -494,6 +529,13 @@ class VolatilityArbBacktest:
         print(f"Max Edge Seen:   {result.max_edge_seen:.2f}%")
         print(f"Edges > {self.min_edge_pct}%:    {result.edges_above_threshold}")
 
+        print(f"\n--- Fees ---")
+        print(f"Order Type:      {self.order_type.upper()}")
+        print(f"Fee Rate:        {self.fee_rate * 100:.1f}%")
+        print(f"Total Fees Paid: ${result.total_fees:.2f}")
+        if result.total_trades > 0:
+            print(f"Avg Fee/Trade:   ${result.total_fees / result.total_trades:.2f}")
+
         print("=" * 60)
 
         # Trade details
@@ -513,6 +555,8 @@ def run_volatility_backtest(
     data_path: str,
     initial_balance: float = 1000.0,
     min_edge_pct: float = 3.0,
+    order_type: str = "maker",
+    custom_fee: Optional[float] = None,
     verbose: bool = True
 ) -> BacktestResult:
     """
@@ -522,6 +566,8 @@ def run_volatility_backtest(
         data_path: Path to data file or directory
         initial_balance: Starting capital
         min_edge_pct: Minimum edge to trade
+        order_type: "maker" (0% fee) or "taker" (2% fee)
+        custom_fee: Optional custom fee rate (overrides order_type)
         verbose: Print progress
 
     Returns:
@@ -529,7 +575,9 @@ def run_volatility_backtest(
     """
     backtest = VolatilityArbBacktest(
         initial_balance=initial_balance,
-        min_edge_pct=min_edge_pct
+        min_edge_pct=min_edge_pct,
+        order_type=order_type,
+        custom_fee=custom_fee
     )
 
     data = backtest.load_data(data_path)
