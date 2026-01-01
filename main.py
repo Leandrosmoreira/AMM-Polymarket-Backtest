@@ -41,6 +41,15 @@ from src.gabagool import (
     MODERATE_CONFIG,
     AGGRESSIVE_CONFIG,
 )
+from src.volatility_arb import (
+    VolatilityArbBot,
+    BotConfig,
+    ExecutionMode,
+    run_bot as run_volatility_bot,
+    PAPER_TRADING_CONFIG,
+    CONSERVATIVE_CONFIG as VOL_CONSERVATIVE_CONFIG,
+    AGGRESSIVE_CONFIG as VOL_AGGRESSIVE_CONFIG,
+)
 
 # Setup logging
 logging.basicConfig(
@@ -332,6 +341,20 @@ def main():
     gab_test_parser = subparsers.add_parser('gabagool-test', help='Quick test of Gabagool strategy')
     gab_test_parser.add_argument('--markets', type=int, default=50, help='Number of markets')
 
+    # === VOLATILITY ARBITRAGE BOT COMMANDS ===
+
+    # Vol-arb Bot command (paper trading)
+    vol_bot_parser = subparsers.add_parser('vol-bot', help='Run volatility arbitrage bot')
+    vol_bot_parser.add_argument('--live', action='store_true', help='Enable live trading')
+    vol_bot_parser.add_argument('--balance', type=float, default=1000.0, help='Initial balance')
+    vol_bot_parser.add_argument('--min-edge', type=float, default=3.0, help='Min edge % to trade')
+    vol_bot_parser.add_argument('--risk', type=str, choices=['conservative', 'moderate', 'aggressive'], default='moderate', help='Risk level')
+
+    # Vol-arb Test command
+    vol_test_parser = subparsers.add_parser('vol-test', help='Quick test of volatility arb strategy')
+    vol_test_parser.add_argument('--balance', type=float, default=1000.0, help='Initial balance')
+    vol_test_parser.add_argument('--duration', type=int, default=60, help='Test duration in seconds')
+
     args = parser.parse_args()
 
     if args.command == 'collect':
@@ -354,6 +377,10 @@ def main():
         run_gabagool_bot_cmd(args)
     elif args.command == 'gabagool-test':
         run_gabagool_test_cmd(args)
+    elif args.command == 'vol-bot':
+        run_vol_bot_cmd(args)
+    elif args.command == 'vol-test':
+        run_vol_test_cmd(args)
     else:
         parser.print_help()
 
@@ -725,6 +752,77 @@ def run_gabagool_test_cmd(args):
 
     logger.info("Gabagool test complete!")
     return result
+
+
+# === VOLATILITY ARBITRAGE COMMANDS ===
+
+def run_vol_bot_cmd(args):
+    """Run volatility arbitrage bot."""
+    import asyncio
+
+    logger.info("=" * 60)
+    logger.info("VOLATILITY ARBITRAGE BOT")
+    logger.info("=" * 60)
+
+    # Create config
+    config = BotConfig(
+        mode=ExecutionMode.LIVE if args.live else ExecutionMode.PAPER,
+        initial_balance=args.balance,
+        min_edge_percent=args.min_edge,
+        risk_level=args.risk,
+    )
+
+    if args.live:
+        logger.warning("LIVE TRADING MODE - Real money will be used!")
+        response = input("Are you sure? (yes/no): ")
+        if response.lower() != 'yes':
+            logger.info("Cancelled")
+            return
+
+    logger.info(f"Mode: {'LIVE' if args.live else 'PAPER'}")
+    logger.info(f"Balance: ${args.balance}")
+    logger.info(f"Min Edge: {args.min_edge}%")
+    logger.info(f"Risk: {args.risk}")
+    logger.info("=" * 60)
+
+    asyncio.run(run_volatility_bot(config))
+
+
+def run_vol_test_cmd(args):
+    """Quick test of volatility arb strategy."""
+    import asyncio
+
+    logger.info("Running volatility arb quick test...")
+
+    config = BotConfig(
+        mode=ExecutionMode.PAPER,
+        initial_balance=args.balance,
+        min_edge_percent=3.0,
+        risk_level='moderate',
+    )
+
+    async def run_test():
+        from src.volatility_arb import VolatilityArbBot
+
+        bot = VolatilityArbBot(config)
+
+        # Run for specified duration
+        try:
+            # Start bot in background
+            bot_task = asyncio.create_task(bot.start())
+
+            # Wait for duration
+            await asyncio.sleep(args.duration)
+
+            # Stop bot
+            await bot.stop()
+
+        except Exception as e:
+            logger.error(f"Test error: {e}")
+            await bot.stop()
+
+    asyncio.run(run_test())
+    logger.info("Volatility arb test complete!")
 
 
 if __name__ == '__main__':
