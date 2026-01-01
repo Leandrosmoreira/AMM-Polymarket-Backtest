@@ -165,37 +165,77 @@ class PolymarketCollector:
             Market info dict or None
         """
         try:
-            # Search for BTC markets
-            response = await self.client.get(
-                f"{POLYMARKET_GAMMA_API}/markets",
-                params={
-                    "closed": "false",
-                    "limit": 50,
-                }
-            )
-            markets = response.json()
+            # Search patterns for BTC 15min markets
+            search_patterns = [
+                {"tag": "btc", "closed": "false"},
+                {"tag": "bitcoin", "closed": "false"},
+                {"slug_contains": "btc", "closed": "false"},
+            ]
 
-            # Find BTC 15min up/down market
-            for market in markets:
+            all_markets = []
+
+            for params in search_patterns:
+                try:
+                    params["limit"] = 100
+                    response = await self.client.get(
+                        f"{POLYMARKET_GAMMA_API}/markets",
+                        params=params
+                    )
+                    if response.status_code == 200:
+                        markets = response.json()
+                        all_markets.extend(markets)
+                except Exception as e:
+                    logger.debug(f"Search with {params} failed: {e}")
+                    continue
+
+            # Remove duplicates by condition_id
+            seen = set()
+            unique_markets = []
+            for m in all_markets:
+                cid = m.get('condition_id') or m.get('id')
+                if cid and cid not in seen:
+                    seen.add(cid)
+                    unique_markets.append(m)
+
+            logger.info(f"Found {len(unique_markets)} potential BTC markets")
+
+            # Priority 1: BTC 15min up/down markets (exact match)
+            for market in unique_markets:
                 question = market.get('question', '').lower()
                 slug = market.get('slug', '').lower()
 
-                if ('btc' in question or 'bitcoin' in question) and \
-                   ('15' in question or '15min' in slug or '15-min' in slug) and \
-                   ('up' in question or 'down' in question):
+                # Must have btc/bitcoin in question or slug
+                is_btc = 'btc' in question or 'bitcoin' in question or 'btc' in slug
+                if not is_btc:
+                    continue
+
+                # Must be 15 minute market
+                is_15min = '15' in question or '15min' in slug or '15-min' in slug
+
+                # Must be up/down market
+                is_up_down = 'up' in question or 'down' in question or 'higher' in question or 'lower' in question
+
+                if is_15min and is_up_down:
+                    logger.info(f"Found BTC 15min market: {slug}")
                     return market
 
-            # Alternative: search by slug pattern
-            response = await self.client.get(
-                f"{POLYMARKET_GAMMA_API}/markets",
-                params={
-                    "slug_contains": "btc-up",
-                    "closed": "false",
-                }
-            )
-            markets = response.json()
-            if markets:
-                return markets[0]
+            # Priority 2: Any BTC price prediction market (1h, 4h, etc)
+            for market in unique_markets:
+                question = market.get('question', '').lower()
+                slug = market.get('slug', '').lower()
+
+                is_btc = 'btc' in question or 'bitcoin' in question or 'btc' in slug
+                is_price = 'price' in question or 'up' in question or 'down' in question or 'higher' in question
+
+                if is_btc and is_price:
+                    logger.info(f"Found BTC price market: {slug}")
+                    return market
+
+            # Log what markets we found for debugging
+            if unique_markets:
+                logger.info("Available markets (first 5):")
+                for m in unique_markets[:5]:
+                    logger.info(f"  - {m.get('slug', 'unknown')}: {m.get('question', 'no question')[:50]}")
 
             return None
 
@@ -246,6 +286,12 @@ class PolymarketCollector:
                 f"{POLYMARKET_CLOB_API}/book",
                 params={"token_id": token_id}
             )
+            if response.status_code == 404:
+                logger.debug(f"Token not found (404): {token_id[:20]}...")
+                return None
+            if response.status_code != 200:
+                logger.warning(f"Order book request failed: {response.status_code}")
+                return None
             return response.json()
         except Exception as e:
             logger.error(f"Error fetching order book: {e}")
@@ -455,6 +501,9 @@ class DataCollectorService:
 
     async def _collect_token_prices_loop(self):
         """Continuously collect token prices."""
+        consecutive_failures = 0
+        max_failures = 10  # After 10 consecutive failures, try to find new market
+
         while self.running:
             try:
                 if self.state.up_token_id and self.state.down_token_id:
@@ -465,6 +514,15 @@ class DataCollectorService:
                     if prices:
                         self.state.price_changes.append(prices)
                         self.state.price_change_count += 1
+                        consecutive_failures = 0  # Reset on success
+                    else:
+                        consecutive_failures += 1
+
+                        # If we've failed too many times, tokens probably expired
+                        if consecutive_failures >= max_failures:
+                            logger.warning(f"Token prices failed {max_failures} times, searching for new market...")
+                            await self._find_and_set_market()
+                            consecutive_failures = 0
 
                 await asyncio.sleep(self.token_price_interval)
 
