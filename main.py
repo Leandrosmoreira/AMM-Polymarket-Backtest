@@ -52,6 +52,12 @@ from src.volatility_arb import (
     CONSERVATIVE_CONFIG as VOL_CONSERVATIVE_CONFIG,
     AGGRESSIVE_CONFIG as VOL_AGGRESSIVE_CONFIG,
 )
+from src.market_making import (
+    ScalpBacktest,
+    run_scalp_backtest,
+    EdgeProportionalBacktest,
+    run_edge_proportional_backtest,
+)
 
 # Setup logging
 logging.basicConfig(
@@ -370,6 +376,30 @@ def main():
     vol_backtest_parser.add_argument('--fee', type=float, default=None, help='Custom fee rate (overrides order-type)')
     vol_backtest_parser.add_argument('--output', type=str, help='Output directory for results')
 
+    # === MARKET MAKING / SCALP COMMANDS ===
+
+    # Scalp backtest command
+    scalp_parser = subparsers.add_parser('scalp-backtest', help='Run scalp/market making backtest')
+    scalp_parser.add_argument('--data', type=str, default='data/raw', help='Path to data file or directory')
+    scalp_parser.add_argument('--balance', type=float, default=1000.0, help='Initial balance')
+    scalp_parser.add_argument('--spread-target', type=float, default=0.02, help='Target spread to capture')
+    scalp_parser.add_argument('--order-size', type=float, default=10.0, help='Size per order in USD')
+    scalp_parser.add_argument('--order-type', choices=['maker', 'taker'], default='maker',
+                              help='Order type: maker (0%% fee) or taker (2%% fee)')
+    scalp_parser.add_argument('--fee', type=float, default=None, help='Custom fee rate')
+    scalp_parser.add_argument('--output', type=str, help='Output directory for results')
+
+    # Edge-based proportional backtest command
+    edge_parser = subparsers.add_parser('edge-backtest', help='Run edge-based proportional backtest')
+    edge_parser.add_argument('--data', type=str, default='data/raw', help='Path to data file or directory')
+    edge_parser.add_argument('--balance', type=float, default=1000.0, help='Initial balance')
+    edge_parser.add_argument('--min-edge', type=float, default=3.0, help='Min edge %% to trade')
+    edge_parser.add_argument('--trade-size', type=float, default=10.0, help='Trade size as %% of balance')
+    edge_parser.add_argument('--order-type', choices=['maker', 'taker'], default='maker',
+                              help='Order type: maker (0%% fee) or taker (2%% fee)')
+    edge_parser.add_argument('--fee', type=float, default=None, help='Custom fee rate')
+    edge_parser.add_argument('--output', type=str, help='Output directory for results')
+
     args = parser.parse_args()
 
     if args.command == 'collect':
@@ -398,6 +428,10 @@ def main():
         run_vol_test_cmd(args)
     elif args.command == 'vol-backtest':
         run_vol_backtest_cmd(args)
+    elif args.command == 'scalp-backtest':
+        run_scalp_backtest_cmd(args)
+    elif args.command == 'edge-backtest':
+        run_edge_backtest_cmd(args)
     else:
         parser.print_help()
 
@@ -941,6 +975,92 @@ def run_vol_backtest_cmd(args):
             json.dump(summary, f, indent=2)
 
         logger.info(f"Results saved to {output_dir}")
+
+    return result
+
+
+# === MARKET MAKING / SCALP COMMANDS ===
+
+def run_scalp_backtest_cmd(args):
+    """Run scalp/market making backtest."""
+    logger.info("=" * 60)
+    logger.info("SCALP / MARKET MAKING BACKTEST")
+    logger.info("=" * 60)
+
+    data_path = args.data
+    if not Path(data_path).exists():
+        logger.error(f"Data path not found: {data_path}")
+        logger.info("Make sure to collect data first with the collector")
+        return
+
+    # Get fee settings
+    order_type = getattr(args, 'order_type', 'maker')
+    custom_fee = getattr(args, 'fee', None)
+
+    logger.info(f"Data Path:     {data_path}")
+    logger.info(f"Balance:       ${args.balance}")
+    logger.info(f"Spread Target: {args.spread_target * 100:.1f}%")
+    logger.info(f"Order Size:    ${args.order_size}")
+    logger.info(f"Order Type:    {order_type.upper()}")
+    if custom_fee is not None:
+        logger.info(f"Custom Fee:    {custom_fee * 100:.1f}%")
+    else:
+        fee_rate = 0.0 if order_type == 'maker' else 0.02
+        logger.info(f"Fee Rate:      {fee_rate * 100:.1f}%")
+    logger.info("=" * 60)
+
+    # Run backtest
+    result = run_scalp_backtest(
+        data_path=data_path,
+        initial_balance=args.balance,
+        spread_target=args.spread_target,
+        order_size=args.order_size,
+        order_type=order_type,
+        custom_fee=custom_fee,
+        verbose=True
+    )
+
+    return result
+
+
+def run_edge_backtest_cmd(args):
+    """Run edge-based proportional backtest."""
+    logger.info("=" * 60)
+    logger.info("EDGE-BASED PROPORTIONAL BACKTEST")
+    logger.info("=" * 60)
+
+    data_path = args.data
+    if not Path(data_path).exists():
+        logger.error(f"Data path not found: {data_path}")
+        logger.info("Make sure to collect data first with the collector")
+        return
+
+    # Get fee settings
+    order_type = getattr(args, 'order_type', 'maker')
+    custom_fee = getattr(args, 'fee', None)
+
+    logger.info(f"Data Path:     {data_path}")
+    logger.info(f"Balance:       ${args.balance}")
+    logger.info(f"Min Edge:      {args.min_edge}%")
+    logger.info(f"Trade Size:    {args.trade_size}% of balance")
+    logger.info(f"Order Type:    {order_type.upper()}")
+    if custom_fee is not None:
+        logger.info(f"Custom Fee:    {custom_fee * 100:.1f}%")
+    else:
+        fee_rate = 0.0 if order_type == 'maker' else 0.02
+        logger.info(f"Fee Rate:      {fee_rate * 100:.1f}%")
+    logger.info("=" * 60)
+
+    # Run backtest
+    result = run_edge_proportional_backtest(
+        data_path=data_path,
+        initial_balance=args.balance,
+        min_edge_pct=args.min_edge,
+        trade_size_pct=args.trade_size,
+        order_type=order_type,
+        custom_fee=custom_fee,
+        verbose=True
+    )
 
     return result
 
