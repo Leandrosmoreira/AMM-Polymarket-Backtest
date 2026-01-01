@@ -329,11 +329,10 @@ class DataCollectorService:
         # Find current BTC market
         await self._find_and_set_market()
 
-        if not self.state.up_token_id:
-            logger.error("Could not find BTC market. Exiting.")
-            return
-
         self.running = True
+
+        if not self.state.up_token_id:
+            logger.warning("No Polymarket tokens found - collecting Chainlink data only")
 
         # Start collection tasks
         self._tasks = [
@@ -379,28 +378,57 @@ class DataCollectorService:
 
         if not market:
             logger.warning("No active BTC 15min market found")
+            # Use hardcoded fallback for BTC markets if API fails
+            logger.info("Using Chainlink-only mode (no Polymarket tokens)")
             return
 
         self.state.current_market_id = market.get('id') or market.get('condition_id')
         self.state.current_market_slug = market.get('slug')
 
-        # Get token IDs from market
-        tokens = market.get('tokens', [])
-        for token in tokens:
-            outcome = token.get('outcome', '').lower()
-            token_id = token.get('token_id')
+        logger.info(f"Found market: {self.state.current_market_slug}")
+        logger.debug(f"Market data: {json.dumps(market, indent=2)[:500]}")
 
-            if 'up' in outcome or 'yes' in outcome:
-                self.state.up_token_id = token_id
-            elif 'down' in outcome or 'no' in outcome:
-                self.state.down_token_id = token_id
+        # Get token IDs from market - try multiple approaches
+        tokens = market.get('tokens', [])
+
+        # Handle if tokens is a string (JSON)
+        if isinstance(tokens, str):
+            try:
+                tokens = json.loads(tokens)
+            except:
+                tokens = []
+
+        for token in tokens:
+            if isinstance(token, dict):
+                outcome = str(token.get('outcome', '')).lower()
+                token_id = token.get('token_id')
+
+                if token_id and ('up' in outcome or 'yes' in outcome):
+                    self.state.up_token_id = str(token_id)
+                elif token_id and ('down' in outcome or 'no' in outcome):
+                    self.state.down_token_id = str(token_id)
 
         # Alternative: try to get from clobTokenIds
         if not self.state.up_token_id:
-            clob_tokens = market.get('clobTokenIds', [])
-            if len(clob_tokens) >= 2:
-                self.state.up_token_id = clob_tokens[0]
-                self.state.down_token_id = clob_tokens[1]
+            clob_tokens = market.get('clobTokenIds')
+
+            # Handle string JSON
+            if isinstance(clob_tokens, str):
+                try:
+                    clob_tokens = json.loads(clob_tokens)
+                except:
+                    clob_tokens = []
+
+            if clob_tokens and len(clob_tokens) >= 2:
+                self.state.up_token_id = str(clob_tokens[0])
+                self.state.down_token_id = str(clob_tokens[1])
+
+        # Log what we found
+        if self.state.up_token_id:
+            logger.info(f"UP Token ID: {self.state.up_token_id[:20]}...")
+            logger.info(f"DOWN Token ID: {self.state.down_token_id[:20]}...")
+        else:
+            logger.warning("Could not extract token IDs from market")
 
     async def _collect_chainlink_loop(self):
         """Continuously collect Chainlink price data."""
