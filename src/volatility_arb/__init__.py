@@ -61,6 +61,12 @@ from .bot import (
     CONSERVATIVE_CONFIG,
     AGGRESSIVE_CONFIG
 )
+from .backtest import (
+    VolatilityArbBacktest,
+    BacktestResult,
+    BacktestTrade,
+    run_volatility_backtest
+)
 
 
 __all__ = [
@@ -111,4 +117,10 @@ __all__ = [
     'PAPER_TRADING_CONFIG',
     'CONSERVATIVE_CONFIG',
     'AGGRESSIVE_CONFIG',
+
+    # Backtest
+    'VolatilityArbBacktest',
+    'BacktestResult',
+    'BacktestTrade',
+    'run_volatility_backtest',
 ]

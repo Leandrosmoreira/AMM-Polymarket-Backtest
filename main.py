@@ -46,6 +46,8 @@ from src.volatility_arb import (
     BotConfig,
     ExecutionMode,
     run_bot as run_volatility_bot,
+    VolatilityArbBacktest,
+    run_volatility_backtest,
     PAPER_TRADING_CONFIG,
     CONSERVATIVE_CONFIG as VOL_CONSERVATIVE_CONFIG,
     AGGRESSIVE_CONFIG as VOL_AGGRESSIVE_CONFIG,
@@ -355,6 +357,13 @@ def main():
     vol_test_parser.add_argument('--balance', type=float, default=1000.0, help='Initial balance')
     vol_test_parser.add_argument('--duration', type=int, default=60, help='Test duration in seconds')
 
+    # Vol-arb Backtest command (with real data)
+    vol_backtest_parser = subparsers.add_parser('vol-backtest', help='Run volatility arb backtest with real data')
+    vol_backtest_parser.add_argument('--data', type=str, default='data/raw', help='Path to data file or directory')
+    vol_backtest_parser.add_argument('--balance', type=float, default=1000.0, help='Initial balance')
+    vol_backtest_parser.add_argument('--min-edge', type=float, default=3.0, help='Min edge % to trade')
+    vol_backtest_parser.add_argument('--output', type=str, help='Output directory for results')
+
     args = parser.parse_args()
 
     if args.command == 'collect':
@@ -381,6 +390,8 @@ def main():
         run_vol_bot_cmd(args)
     elif args.command == 'vol-test':
         run_vol_test_cmd(args)
+    elif args.command == 'vol-backtest':
+        run_vol_backtest_cmd(args)
     else:
         parser.print_help()
 
@@ -823,6 +834,82 @@ def run_vol_test_cmd(args):
 
     asyncio.run(run_test())
     logger.info("Volatility arb test complete!")
+
+
+def run_vol_backtest_cmd(args):
+    """Run volatility arb backtest with real data."""
+    logger.info("=" * 60)
+    logger.info("VOLATILITY ARBITRAGE BACKTEST")
+    logger.info("=" * 60)
+
+    data_path = args.data
+    if not Path(data_path).exists():
+        logger.error(f"Data path not found: {data_path}")
+        logger.info("Make sure to collect data first with the collector")
+        return
+
+    logger.info(f"Data Path:   {data_path}")
+    logger.info(f"Balance:     ${args.balance}")
+    logger.info(f"Min Edge:    {args.min_edge}%")
+    logger.info("=" * 60)
+
+    # Run backtest
+    result = run_volatility_backtest(
+        data_path=data_path,
+        initial_balance=args.balance,
+        min_edge_pct=args.min_edge,
+        verbose=True
+    )
+
+    # Save results if output specified
+    if args.output:
+        output_dir = Path(args.output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save trades
+        import json
+        trades_data = []
+        for t in result.trades:
+            trades_data.append({
+                'trade_id': t.trade_id,
+                'timestamp': t.timestamp,
+                'direction': t.direction,
+                'entry_price': t.entry_price,
+                'size_usd': t.size_usd,
+                'tokens': t.tokens,
+                'btc_price': t.btc_price,
+                'model_prob': t.model_prob,
+                'market_price': t.market_price,
+                'edge_pct': t.edge_pct,
+                'won': t.won,
+                'pnl': t.pnl,
+            })
+
+        with open(output_dir / 'vol_trades.json', 'w') as f:
+            json.dump(trades_data, f, indent=2)
+
+        # Save summary
+        summary = {
+            'total_trades': result.total_trades,
+            'wins': result.wins,
+            'losses': result.losses,
+            'win_rate': result.win_rate,
+            'total_pnl': result.total_pnl,
+            'initial_balance': result.initial_balance,
+            'final_balance': result.final_balance,
+            'profit_factor': result.profit_factor,
+            'sharpe_ratio': result.sharpe_ratio,
+            'max_drawdown_pct': result.max_drawdown_pct,
+            'avg_edge_taken': result.avg_edge_taken,
+            'data_duration_hours': result.data_duration_hours,
+        }
+
+        with open(output_dir / 'vol_summary.json', 'w') as f:
+            json.dump(summary, f, indent=2)
+
+        logger.info(f"Results saved to {output_dir}")
+
+    return result
 
 
 if __name__ == '__main__':
