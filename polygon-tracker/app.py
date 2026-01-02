@@ -248,21 +248,29 @@ def fetch_all_transactions():
 
     all_txs = []
 
-    # Buscar transações normais
+    # Buscar transações normais (filtrar apenas Polymarket)
+    print(f"Buscando transações para {GABAGOOL_WALLET}...")
     normal_txs = get_polygonscan_transactions(GABAGOOL_WALLET)
+    print(f"Transações normais encontradas: {len(normal_txs)}")
     polymarket_txs = [tx for tx in normal_txs if is_polymarket_transaction(tx)]
+    print(f"Transações Polymarket (normais): {len(polymarket_txs)}")
     all_txs.extend(polymarket_txs)
 
     time.sleep(0.2)  # Rate limit
 
-    # Buscar transferências de tokens
+    # Buscar transferências de tokens (ERC1155 já são da Polymarket)
     token_transfers = get_token_transfers(GABAGOOL_WALLET)
-    polymarket_transfers = [tx for tx in token_transfers if is_polymarket_transaction(tx)]
-    all_txs.extend(polymarket_transfers)
+    print(f"Token transfers encontrados: {len(token_transfers)}")
+
+    # ERC1155 tokens são todos da Polymarket (conditional tokens)
+    # Não precisa filtrar - incluir todos
+    all_txs.extend(token_transfers)
+    print(f"Total de transações antes do parse: {len(all_txs)}")
 
     # Parse e ordenar
     parsed_txs = [parse_transaction(tx) for tx in all_txs]
     parsed_txs = [tx for tx in parsed_txs if not tx['is_error']]
+    print(f"Transações após parse (sem erros): {len(parsed_txs)}")
 
     # Remover duplicatas por hash
     seen_hashes = set()
