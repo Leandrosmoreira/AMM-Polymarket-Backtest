@@ -23,6 +23,10 @@ Criar um site para rastrear em tempo real todas as transações que a carteira d
 polygon-tracker/
 ├── app.py                 # Backend Flask
 ├── requirements.txt       # Dependências Python
+├── Dockerfile             # Container Docker
+├── docker-compose.yml     # Orquestração
+├── .env.example           # Exemplo de variáveis
+├── nginx.conf             # Config Nginx (produção)
 ├── templates/
 │   └── index.html         # Frontend principal
 ├── static/
@@ -206,6 +210,240 @@ GABAGOOL_WALLET=0x...  # Endereço extraído
 | Polymarket API indisponível | Fallback para condition_id como nome |
 | Transações complexas | Log de erros, skip graceful |
 | Mudanças na ABI | Versionamento, alertas |
+
+---
+
+## Deploy com Docker em VPS Linux
+
+### Arquivos Docker
+
+#### Dockerfile
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Instalar dependências do sistema
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar requirements primeiro (cache layer)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar código da aplicação
+COPY . .
+
+# Expor porta
+EXPOSE 5000
+
+# Usar gunicorn em produção
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "app:app"]
+```
+
+#### docker-compose.yml
+```yaml
+version: '3.8'
+
+services:
+  tracker:
+    build: .
+    container_name: polygon-tracker
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - POLYGONSCAN_API_KEY=${POLYGONSCAN_API_KEY}
+      - GABAGOOL_WALLET=${GABAGOOL_WALLET}
+      - FLASK_ENV=production
+    volumes:
+      - ./data:/app/data  # Persistir cache
+    networks:
+      - tracker-net
+
+  nginx:
+    image: nginx:alpine
+    container_name: tracker-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - tracker
+    networks:
+      - tracker-net
+
+  certbot:
+    image: certbot/certbot
+    container_name: tracker-certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+networks:
+  tracker-net:
+    driver: bridge
+```
+
+#### nginx.conf
+```nginx
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream tracker {
+        server tracker:5000;
+    }
+
+    server {
+        listen 80;
+        server_name seu-dominio.com;
+
+        location /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+        }
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+    server {
+        listen 443 ssl;
+        server_name seu-dominio.com;
+
+        ssl_certificate /etc/letsencrypt/live/seu-dominio.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/seu-dominio.com/privkey.pem;
+
+        location / {
+            proxy_pass http://tracker;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+}
+```
+
+#### .env.example
+```bash
+# Polygonscan API
+POLYGONSCAN_API_KEY=sua_api_key_aqui
+
+# Carteira para rastrear
+GABAGOOL_WALLET=0x...
+
+# Flask
+FLASK_ENV=production
+SECRET_KEY=gerar_chave_segura_aqui
+```
+
+---
+
+### Deploy na VPS - Passo a Passo
+
+#### 1. Preparar VPS (Ubuntu/Debian)
+```bash
+# Atualizar sistema
+sudo apt update && sudo apt upgrade -y
+
+# Instalar Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+# Instalar Docker Compose
+sudo apt install docker-compose-plugin -y
+
+# Adicionar usuário ao grupo docker
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+#### 2. Clonar e Configurar
+```bash
+# Clonar repositório
+git clone https://github.com/Leandrosmoreira/AMM-Polymarket-Backtest.git
+cd AMM-Polymarket-Backtest/polygon-tracker
+
+# Criar arquivo .env
+cp .env.example .env
+nano .env  # Editar com suas credenciais
+```
+
+#### 3. Build e Iniciar
+```bash
+# Build da imagem
+docker compose build
+
+# Iniciar em background
+docker compose up -d
+
+# Ver logs
+docker compose logs -f tracker
+```
+
+#### 4. Configurar SSL (HTTPS)
+```bash
+# Gerar certificado SSL com Let's Encrypt
+docker compose run --rm certbot certonly \
+    --webroot \
+    --webroot-path=/var/www/certbot \
+    -d seu-dominio.com
+
+# Reiniciar nginx
+docker compose restart nginx
+```
+
+#### 5. Comandos Úteis
+```bash
+# Status dos containers
+docker compose ps
+
+# Reiniciar aplicação
+docker compose restart tracker
+
+# Parar tudo
+docker compose down
+
+# Atualizar para nova versão
+git pull
+docker compose build
+docker compose up -d
+
+# Ver logs em tempo real
+docker compose logs -f
+
+# Acessar shell do container
+docker compose exec tracker /bin/bash
+```
+
+---
+
+### Requisitos VPS
+
+| Recurso | Mínimo | Recomendado |
+|---------|--------|-------------|
+| CPU | 1 vCPU | 2 vCPU |
+| RAM | 1 GB | 2 GB |
+| Disco | 10 GB | 20 GB SSD |
+| SO | Ubuntu 20.04+ | Ubuntu 22.04 |
+
+### Provedores Sugeridos
+
+| Provedor | Plano | Preço Estimado |
+|----------|-------|----------------|
+| DigitalOcean | Basic Droplet | $6/mês |
+| Vultr | Cloud Compute | $6/mês |
+| Hetzner | CX11 | €4/mês |
+| Contabo | VPS S | €5/mês |
 
 ---
 
