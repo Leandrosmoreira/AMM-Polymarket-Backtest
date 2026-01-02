@@ -168,15 +168,19 @@ def parse_transaction(tx):
     timestamp = int(tx.get('timeStamp', 0))
     dt = datetime.fromtimestamp(timestamp)
 
-    # Determinar tipo de operação
+    # Determinar tipo de operação baseado na direção do token
     wallet_lower = GABAGOOL_WALLET.lower()
     from_addr = tx.get('from', '').lower()
     to_addr = tx.get('to', '').lower()
 
-    if from_addr == wallet_lower:
+    # Para ERC1155: se wallet recebe token = BUY, se wallet envia = SELL
+    if to_addr == wallet_lower:
+        side = 'BUY'
+    elif from_addr == wallet_lower:
         side = 'SELL'
     else:
-        side = 'BUY'
+        # Verificar se é transação normal (não token transfer)
+        side = 'SELL' if from_addr == wallet_lower else 'BUY'
 
     # Valor
     value = tx.get('value', '0')
