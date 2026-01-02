@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gabagool Tracker - Polymarket</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>Gabagool Tracker</h1>
+                <p class="subtitle">Polymarket Transaction Monitor</p>
+            </div>
+            <div class="header-right">
+                <a href="https://polymarket.com/@gabagool22" target="_blank" class="profile-link">
+                    @gabagool22
+                </a>
+                <a href="https://polygonscan.com/address/{{ wallet }}" target="_blank" class="wallet-link">
+                    {{ wallet[:6] }}...{{ wallet[-4:] }}
+                </a>
+            </div>
+        </header>
+
+        <!-- Stats Cards -->
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="stat-value" id="totalTx">-</div>
+                <div class="stat-label">Total Transactions</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalBuys">-</div>
+                <div class="stat-label">Buys</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalSells">-</div>
+                <div class="stat-label">Sells</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="uniqueMarkets">-</div>
+                <div class="stat-label">Markets</div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+            <div class="filters">
+                <select id="filterSide" class="filter-select">
+                    <option value="all">All Sides</option>
+                    <option value="BUY">Buy Only</option>
+                    <option value="SELL">Sell Only</option>
+                </select>
+                <select id="filterToken" class="filter-select">
+                    <option value="all">All Tokens</option>
+                    <option value="YES">YES Only</option>
+                    <option value="NO">NO Only</option>
+                </select>
+                <input type="date" id="filterDateFrom" class="filter-input" placeholder="From Date">
+                <input type="date" id="filterDateTo" class="filter-input" placeholder="To Date">
+                <button id="clearFilters" class="btn btn-secondary">Clear Filters</button>
+            </div>
+            <div class="sync-controls">
+                <span class="last-sync" id="lastSync">Never synced</span>
+                <button id="syncBtn" class="btn btn-primary">
+                    <span class="sync-icon">&#x21bb;</span>
+                    SYNC
+                </button>
+            </div>
+        </div>
+
+        <!-- Transactions Table -->
+        <div class="table-container">
+            <table class="tx-table" id="txTable">
+                <thead>
+                    <tr>
+                        <th>Date/Time</th>
+                        <th>Side</th>
+                        <th>Token</th>
+                        <th>Amount</th>
+                        <th>Method</th>
+                        <th>Hash</th>
+                    </tr>
+                </thead>
+                <tbody id="txBody">
+                    <tr class="loading-row">
+                        <td colspan="6">
+                            <div class="loading">
+                                <div class="spinner"></div>
+                                <span>Loading transactions...</span>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination" id="pagination">
+            <button id="prevPage" class="btn btn-secondary" disabled>Previous</button>
+            <span id="pageInfo">Page 1</span>
+            <button id="nextPage" class="btn btn-secondary">Next</button>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Data from <a href="https://polygonscan.com" target="_blank">Polygonscan</a> |
+            Tracking <a href="https://polymarket.com/@gabagool22" target="_blank">Gabagool</a> on Polymarket</p>
+        </footer>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
