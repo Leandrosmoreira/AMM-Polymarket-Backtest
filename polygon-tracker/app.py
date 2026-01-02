@@ -28,9 +28,11 @@ last_sync = None
 
 
 def get_polygonscan_transactions(address, start_block=0):
-    """Busca transações normais via Polygonscan API"""
-    url = 'https://api.polygonscan.com/api'
+    """Busca transações normais via Polygonscan API V2"""
+    # API V2 - usando chainid 137 para Polygon
+    url = 'https://api.etherscan.io/v2/api'
     params = {
+        'chainid': 137,  # Polygon
         'module': 'account',
         'action': 'txlist',
         'address': address,
@@ -45,8 +47,11 @@ def get_polygonscan_transactions(address, start_block=0):
     try:
         response = requests.get(url, params=params, timeout=30)
         data = response.json()
-        if data['status'] == '1':
-            return data['result']
+        print(f"API Response txlist: status={data.get('status')}, message={data.get('message')}")
+        if data.get('status') == '1':
+            return data.get('result', [])
+        elif data.get('result'):
+            print(f"API Error: {data.get('result')}")
         return []
     except Exception as e:
         print(f"Erro Polygonscan txlist: {e}")
@@ -54,11 +59,12 @@ def get_polygonscan_transactions(address, start_block=0):
 
 
 def get_token_transfers(address, start_block=0):
-    """Busca transferências de tokens ERC20/ERC1155"""
-    url = 'https://api.polygonscan.com/api'
+    """Busca transferências de tokens ERC20/ERC1155 via API V2"""
+    url = 'https://api.etherscan.io/v2/api'
 
     # ERC20 transfers
     params_erc20 = {
+        'chainid': 137,  # Polygon
         'module': 'account',
         'action': 'tokentx',
         'address': address,
@@ -72,6 +78,7 @@ def get_token_transfers(address, start_block=0):
 
     # ERC1155 transfers (tokens condicionais)
     params_erc1155 = {
+        'chainid': 137,  # Polygon
         'module': 'account',
         'action': 'token1155tx',
         'address': address,
@@ -89,10 +96,11 @@ def get_token_transfers(address, start_block=0):
         # ERC20
         response = requests.get(url, params=params_erc20, timeout=30)
         data = response.json()
-        if data['status'] == '1':
-            for tx in data['result']:
+        print(f"API Response ERC20: status={data.get('status')}, count={len(data.get('result', []))}")
+        if data.get('status') == '1':
+            for tx in data.get('result', []):
                 tx['tokenType'] = 'ERC20'
-            transfers.extend(data['result'])
+            transfers.extend(data.get('result', []))
     except Exception as e:
         print(f"Erro ERC20: {e}")
 
@@ -102,10 +110,11 @@ def get_token_transfers(address, start_block=0):
         # ERC1155
         response = requests.get(url, params=params_erc1155, timeout=30)
         data = response.json()
-        if data['status'] == '1':
-            for tx in data['result']:
+        print(f"API Response ERC1155: status={data.get('status')}, count={len(data.get('result', []))}")
+        if data.get('status') == '1':
+            for tx in data.get('result', []):
                 tx['tokenType'] = 'ERC1155'
-            transfers.extend(data['result'])
+            transfers.extend(data.get('result', []))
     except Exception as e:
         print(f"Erro ERC1155: {e}")
 
