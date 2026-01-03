@@ -13,6 +13,7 @@ ENV/
 # Data cache
 data/*.json
 data/*.cache
+data/*.db
 
 # IDE
 .vscode/
