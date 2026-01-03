@@ -4,6 +4,7 @@ Backend Flask para rastrear transações na Polymarket
 """
 
 import os
+import csv
 import json
 import time
 from datetime import datetime
@@ -22,145 +23,130 @@ CTF_EXCHANGE = '0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e'
 NEGRISK_CTF_EXCHANGE = '0xC5d563A36AE78145C45a50134d48A1215220f80a'
 CONDITIONAL_TOKENS = '0x4d97dcd97ec945f40cf65f87097ace5ea0476045'
 
-# Cache de mercados
+# Paths
+DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
+CSV_FILE = os.path.join(DATA_DIR, 'transactions.csv')
+META_FILE = os.path.join(DATA_DIR, 'metadata.json')
+
+# Cache
 markets_cache = {}
 last_sync = None
+cached_transactions = []
+
+# Ensure data directory exists
+os.makedirs(DATA_DIR, exist_ok=True)
 
 
-def get_polygonscan_transactions(address, start_block=0):
-    """Busca transações normais via Polygonscan API V2"""
-    # API V2 - usando chainid 137 para Polygon
-    url = 'https://api.etherscan.io/v2/api'
-    params = {
-        'chainid': 137,  # Polygon
-        'module': 'account',
-        'action': 'txlist',
-        'address': address,
-        'startblock': start_block,
-        'endblock': 99999999,
-        'page': 1,
-        'offset': 1000,
-        'sort': 'desc',
-        'apikey': POLYGONSCAN_API_KEY
-    }
+def save_to_csv(transactions):
+    """Salva transações em CSV"""
+    if not transactions:
+        return
 
-    try:
-        response = requests.get(url, params=params, timeout=30)
-        data = response.json()
-        print(f"API Response txlist: status={data.get('status')}, message={data.get('message')}")
-        if data.get('status') == '1':
-            return data.get('result', [])
-        elif data.get('result'):
-            print(f"API Error: {data.get('result')}")
+    fieldnames = ['hash', 'timestamp', 'timestamp_unix', 'date', 'time', 'from', 'to',
+                  'side', 'token_type', 'token_symbol', 'token_name', 'token_id',
+                  'amount', 'value_matic', 'gas_used', 'gas_price', 'contract',
+                  'method', 'is_error', 'tx_type', 'block_number']
+
+    with open(CSV_FILE, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(transactions)
+
+    # Salvar metadata
+    if transactions:
+        max_block = max(int(tx.get('block_number', 0)) for tx in transactions)
+        meta = {
+            'last_block': max_block,
+            'last_sync': datetime.now().isoformat(),
+            'total_transactions': len(transactions)
+        }
+        with open(META_FILE, 'w') as f:
+            json.dump(meta, f)
+
+    print(f"Salvo {len(transactions)} transações em CSV")
+
+
+def load_from_csv():
+    """Carrega transações do CSV"""
+    if not os.path.exists(CSV_FILE):
         return []
+
+    transactions = []
+    try:
+        with open(CSV_FILE, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Converter tipos
+                row['timestamp_unix'] = int(row.get('timestamp_unix', 0))
+                row['amount'] = float(row.get('amount', 0))
+                row['value_matic'] = float(row.get('value_matic', 0))
+                row['is_error'] = row.get('is_error', 'False') == 'True'
+                row['block_number'] = int(row.get('block_number', 0))
+                transactions.append(row)
+        print(f"Carregado {len(transactions)} transações do CSV")
     except Exception as e:
-        print(f"Erro Polygonscan txlist: {e}")
-        return []
+        print(f"Erro ao carregar CSV: {e}")
+
+    return transactions
 
 
-def get_token_transfers(address, start_block=0):
-    """Busca transferências de tokens ERC20/ERC1155 via API V2"""
+def get_last_block():
+    """Retorna o último bloco salvo"""
+    if os.path.exists(META_FILE):
+        try:
+            with open(META_FILE, 'r') as f:
+                meta = json.load(f)
+                return meta.get('last_block', 0)
+        except:
+            pass
+    return 0
+
+
+def get_token_transfers_paginated(address, start_block=0, max_pages=10):
+    """Busca transferências ERC1155 com paginação"""
     url = 'https://api.etherscan.io/v2/api'
+    all_transfers = []
 
-    # ERC20 transfers
-    params_erc20 = {
-        'chainid': 137,  # Polygon
-        'module': 'account',
-        'action': 'tokentx',
-        'address': address,
-        'startblock': start_block,
-        'endblock': 99999999,
-        'page': 1,
-        'offset': 1000,
-        'sort': 'desc',
-        'apikey': POLYGONSCAN_API_KEY
-    }
+    for page in range(1, max_pages + 1):
+        params = {
+            'chainid': 137,
+            'module': 'account',
+            'action': 'token1155tx',
+            'address': address,
+            'startblock': start_block,
+            'endblock': 99999999,
+            'page': page,
+            'offset': 1000,
+            'sort': 'asc',  # Ascendente para pegar do mais antigo
+            'apikey': POLYGONSCAN_API_KEY
+        }
 
-    # ERC1155 transfers (tokens condicionais)
-    params_erc1155 = {
-        'chainid': 137,  # Polygon
-        'module': 'account',
-        'action': 'token1155tx',
-        'address': address,
-        'startblock': start_block,
-        'endblock': 99999999,
-        'page': 1,
-        'offset': 1000,
-        'sort': 'desc',
-        'apikey': POLYGONSCAN_API_KEY
-    }
-
-    transfers = []
-
-    try:
-        # ERC20
-        response = requests.get(url, params=params_erc20, timeout=30)
-        data = response.json()
-        print(f"API Response ERC20: status={data.get('status')}, count={len(data.get('result', []))}")
-        if data.get('status') == '1':
-            for tx in data.get('result', []):
-                tx['tokenType'] = 'ERC20'
-            transfers.extend(data.get('result', []))
-    except Exception as e:
-        print(f"Erro ERC20: {e}")
-
-    time.sleep(0.2)  # Rate limit
-
-    try:
-        # ERC1155
-        response = requests.get(url, params=params_erc1155, timeout=30)
-        data = response.json()
-        print(f"API Response ERC1155: status={data.get('status')}, count={len(data.get('result', []))}")
-        if data.get('status') == '1':
-            for tx in data.get('result', []):
-                tx['tokenType'] = 'ERC1155'
-            transfers.extend(data.get('result', []))
-    except Exception as e:
-        print(f"Erro ERC1155: {e}")
-
-    return transfers
-
-
-def get_market_info(condition_id):
-    """Busca informações do mercado na API da Polymarket"""
-    if condition_id in markets_cache:
-        return markets_cache[condition_id]
-
-    try:
-        # Tenta gamma-api
-        url = f'https://gamma-api.polymarket.com/markets?condition_id={condition_id}'
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
+        try:
+            response = requests.get(url, params=params, timeout=30)
             data = response.json()
-            if data:
-                market_info = {
-                    'question': data[0].get('question', 'Unknown Market'),
-                    'outcome': data[0].get('outcome', ''),
-                    'image': data[0].get('image', '')
-                }
-                markets_cache[condition_id] = market_info
-                return market_info
-    except Exception as e:
-        print(f"Erro buscando mercado {condition_id}: {e}")
 
-    return {'question': f'Market {condition_id[:8]}...', 'outcome': '', 'image': ''}
+            if data.get('status') == '1':
+                results = data.get('result', [])
+                print(f"Página {page}: {len(results)} transações ERC1155")
 
+                for tx in results:
+                    tx['tokenType'] = 'ERC1155'
+                all_transfers.extend(results)
 
-def is_polymarket_transaction(tx):
-    """Verifica se a transação é relacionada à Polymarket"""
-    polymarket_contracts = [
-        CTF_EXCHANGE.lower(),
-        NEGRISK_CTF_EXCHANGE.lower(),
-        CONDITIONAL_TOKENS.lower()
-    ]
+                # Se retornou menos de 1000, não há mais páginas
+                if len(results) < 1000:
+                    break
+            else:
+                print(f"Página {page}: Sem mais resultados")
+                break
 
-    to_addr = tx.get('to', '').lower()
-    from_addr = tx.get('from', '').lower()
-    contract_addr = tx.get('contractAddress', '').lower()
+            time.sleep(0.25)  # Rate limit
 
-    return (to_addr in polymarket_contracts or
-            from_addr in polymarket_contracts or
-            contract_addr in polymarket_contracts)
+        except Exception as e:
+            print(f"Erro página {page}: {e}")
+            break
+
+    return all_transfers
 
 
 def parse_transaction(tx):
@@ -168,57 +154,51 @@ def parse_transaction(tx):
     timestamp = int(tx.get('timeStamp', 0))
     dt = datetime.fromtimestamp(timestamp)
 
-    # Determinar tipo de operação baseado na direção do token
     wallet_lower = GABAGOOL_WALLET.lower()
     from_addr = tx.get('from', '').lower()
     to_addr = tx.get('to', '').lower()
 
-    # Para ERC1155: se wallet recebe token = BUY, se wallet envia = SELL
+    # Lógica corrigida:
+    # - Se tokens vão PARA a carteira = BUY (recebendo)
+    # - Se tokens vão DA carteira = SELL (enviando)
     if to_addr == wallet_lower:
         side = 'BUY'
     elif from_addr == wallet_lower:
         side = 'SELL'
     else:
-        # Verificar se é transação normal (não token transfer)
-        side = 'SELL' if from_addr == wallet_lower else 'BUY'
+        # Fallback baseado no contrato
+        side = 'BUY'
 
     # Valor
     value = tx.get('value', '0')
-    if value != '0':
-        value_eth = int(value) / 1e18
-    else:
-        value_eth = 0
+    value_eth = int(value) / 1e18 if value and value != '0' else 0
 
     # Token info
     token_symbol = tx.get('tokenSymbol', '')
     token_name = tx.get('tokenName', '')
     token_value = tx.get('tokenValue', tx.get('value', '0'))
-    token_decimal = int(tx.get('tokenDecimal', 18))
+    token_decimal = int(tx.get('tokenDecimal', 0) or 0)
 
-    if token_value:
+    if token_value and token_decimal > 0:
         try:
             token_amount = int(token_value) / (10 ** token_decimal)
         except:
-            token_amount = 0
+            token_amount = float(token_value) if token_value else 0
     else:
-        token_amount = 0
+        # ERC1155 não tem decimais, usar tokenValue direto
+        try:
+            token_amount = float(token_value) / 1e6 if token_value else 0  # USDC tem 6 decimais
+        except:
+            token_amount = 0
 
-    # Token ID para ERC1155
     token_id = tx.get('tokenID', '')
 
-    # Determinar se é YES ou NO baseado no token
+    # YES/NO baseado no token ID (convenção Polymarket)
     token_type = 'UNKNOWN'
-    if 'yes' in token_name.lower() or 'yes' in token_symbol.lower():
-        token_type = 'YES'
-    elif 'no' in token_name.lower() or 'no' in token_symbol.lower():
-        token_type = 'NO'
-    elif token_id:
-        # Tokens pares geralmente são YES, ímpares são NO
+    if token_id:
         try:
-            if int(token_id) % 2 == 0:
-                token_type = 'YES'
-            else:
-                token_type = 'NO'
+            # Token IDs pares = YES, ímpares = NO
+            token_type = 'YES' if int(token_id) % 2 == 0 else 'NO'
         except:
             pass
 
@@ -242,54 +222,54 @@ def parse_transaction(tx):
         'contract': tx.get('contractAddress', tx.get('to', '')),
         'method': tx.get('functionName', '').split('(')[0] if tx.get('functionName') else '',
         'is_error': tx.get('isError', '0') == '1',
-        'tx_type': tx.get('tokenType', 'TX')
+        'tx_type': tx.get('tokenType', 'TX'),
+        'block_number': int(tx.get('blockNumber', 0))
     }
 
 
-def fetch_all_transactions():
-    """Busca todas as transações relacionadas à Polymarket"""
-    global last_sync
+def fetch_all_transactions(force_full=False):
+    """Busca todas as transações, usando cache CSV"""
+    global last_sync, cached_transactions
 
-    all_txs = []
+    # Carregar transações existentes do CSV
+    existing_txs = load_from_csv() if not force_full else []
+    existing_hashes = set(tx['hash'] for tx in existing_txs)
 
-    # Buscar transações normais (filtrar apenas Polymarket)
-    print(f"Buscando transações para {GABAGOOL_WALLET}...")
-    normal_txs = get_polygonscan_transactions(GABAGOOL_WALLET)
-    print(f"Transações normais encontradas: {len(normal_txs)}")
-    polymarket_txs = [tx for tx in normal_txs if is_polymarket_transaction(tx)]
-    print(f"Transações Polymarket (normais): {len(polymarket_txs)}")
-    all_txs.extend(polymarket_txs)
+    # Determinar bloco inicial (buscar apenas novas)
+    start_block = 0 if force_full else get_last_block()
+    if start_block > 0:
+        start_block += 1  # Começar do próximo bloco
 
-    time.sleep(0.2)  # Rate limit
+    print(f"Buscando transações a partir do bloco {start_block}...")
 
-    # Buscar transferências de tokens (ERC1155 já são da Polymarket)
-    token_transfers = get_token_transfers(GABAGOOL_WALLET)
-    print(f"Token transfers encontrados: {len(token_transfers)}")
+    # Buscar novas transações ERC1155 com paginação
+    new_transfers = get_token_transfers_paginated(GABAGOOL_WALLET, start_block)
+    print(f"Novas transferências encontradas: {len(new_transfers)}")
 
-    # ERC1155 tokens são todos da Polymarket (conditional tokens)
-    # Não precisa filtrar - incluir todos
-    all_txs.extend(token_transfers)
-    print(f"Total de transações antes do parse: {len(all_txs)}")
+    # Parse novas transações
+    new_parsed = []
+    for tx in new_transfers:
+        parsed = parse_transaction(tx)
+        if parsed['hash'] not in existing_hashes and not parsed['is_error']:
+            new_parsed.append(parsed)
+            existing_hashes.add(parsed['hash'])
 
-    # Parse e ordenar
-    parsed_txs = [parse_transaction(tx) for tx in all_txs]
-    parsed_txs = [tx for tx in parsed_txs if not tx['is_error']]
-    print(f"Transações após parse (sem erros): {len(parsed_txs)}")
+    print(f"Novas transações após parse: {len(new_parsed)}")
 
-    # Remover duplicatas por hash
-    seen_hashes = set()
-    unique_txs = []
-    for tx in parsed_txs:
-        if tx['hash'] not in seen_hashes:
-            seen_hashes.add(tx['hash'])
-            unique_txs.append(tx)
+    # Combinar com existentes
+    all_txs = existing_txs + new_parsed
 
     # Ordenar por timestamp (mais recente primeiro)
-    unique_txs.sort(key=lambda x: x['timestamp_unix'], reverse=True)
+    all_txs.sort(key=lambda x: x['timestamp_unix'], reverse=True)
+
+    # Salvar em CSV
+    if new_parsed or force_full:
+        save_to_csv(all_txs)
 
     last_sync = datetime.now().isoformat()
+    cached_transactions = all_txs
 
-    return unique_txs
+    return all_txs
 
 
 def calculate_stats(transactions):
@@ -311,15 +291,14 @@ def calculate_stats(transactions):
     yes_txs = [tx for tx in transactions if tx['token_type'] == 'YES']
     no_txs = [tx for tx in transactions if tx['token_type'] == 'NO']
 
-    unique_contracts = set(tx['contract'] for tx in transactions if tx['contract'])
-
+    unique_tokens = set(tx.get('token_id', '') for tx in transactions if tx.get('token_id'))
     dates = [tx['date'] for tx in transactions if tx['date']]
 
     return {
         'total_transactions': len(transactions),
         'total_buys': len(buys),
         'total_sells': len(sells),
-        'unique_markets': len(unique_contracts),
+        'unique_markets': len(unique_tokens),
         'total_yes_tokens': len(yes_txs),
         'total_no_tokens': len(no_txs),
         'first_tx_date': min(dates) if dates else None,
@@ -336,9 +315,19 @@ def index():
 
 @app.route('/api/transactions')
 def get_transactions():
-    """API endpoint para buscar transações"""
+    """API endpoint para buscar transações (usa cache)"""
+    global cached_transactions
+
     try:
-        transactions = fetch_all_transactions()
+        # Usar cache se disponível
+        if cached_transactions:
+            transactions = cached_transactions
+        else:
+            transactions = load_from_csv()
+            if not transactions:
+                transactions = fetch_all_transactions()
+            cached_transactions = transactions
+
         stats = calculate_stats(transactions)
 
         return jsonify({
@@ -349,6 +338,8 @@ def get_transactions():
             'last_sync': last_sync
         })
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
@@ -357,9 +348,13 @@ def get_transactions():
 
 @app.route('/api/sync', methods=['POST'])
 def sync_transactions():
-    """Endpoint para forçar sincronização"""
+    """Endpoint para sincronizar novas transações"""
+    global cached_transactions
+
     try:
-        transactions = fetch_all_transactions()
+        # Buscar apenas novas transações
+        transactions = fetch_all_transactions(force_full=False)
+        cached_transactions = transactions
         stats = calculate_stats(transactions)
 
         return jsonify({
@@ -368,13 +363,53 @@ def sync_transactions():
             'stats': stats,
             'wallet': GABAGOOL_WALLET,
             'last_sync': last_sync,
-            'message': f'Sincronizado! {len(transactions)} transações encontradas.'
+            'message': f'Sincronizado! {len(transactions)} transações no total.'
         })
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
         }), 500
+
+
+@app.route('/api/sync/full', methods=['POST'])
+def sync_full():
+    """Força sincronização completa (recarrega tudo)"""
+    global cached_transactions
+
+    try:
+        transactions = fetch_all_transactions(force_full=True)
+        cached_transactions = transactions
+        stats = calculate_stats(transactions)
+
+        return jsonify({
+            'success': True,
+            'transactions': transactions,
+            'stats': stats,
+            'wallet': GABAGOOL_WALLET,
+            'last_sync': last_sync,
+            'message': f'Sync completo! {len(transactions)} transações encontradas.'
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/export/csv')
+def export_csv():
+    """Exporta transações como CSV"""
+    from flask import send_file
+
+    if os.path.exists(CSV_FILE):
+        return send_file(CSV_FILE, as_attachment=True, download_name='gabagool_transactions.csv')
+
+    return jsonify({'error': 'No data available'}), 404
 
 
 @app.route('/api/health')
@@ -383,7 +418,9 @@ def health():
     return jsonify({
         'status': 'ok',
         'wallet': GABAGOOL_WALLET,
-        'has_api_key': bool(POLYGONSCAN_API_KEY)
+        'has_api_key': bool(POLYGONSCAN_API_KEY),
+        'csv_exists': os.path.exists(CSV_FILE),
+        'cached_count': len(cached_transactions)
     })
 
 
