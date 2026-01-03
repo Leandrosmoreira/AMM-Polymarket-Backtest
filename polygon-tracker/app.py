@@ -292,20 +292,14 @@ def get_transactions_by_date():
 
 # ============== API POLYGONSCAN ==============
 
-def fetch_and_save_all_transactions(address, start_block=0, save_each_page=True):
+def fetch_block_range(address, start_block, end_block, sort='asc'):
     """
-    Busca TODAS as transferências ERC1155 e salva a cada página.
-    Sem limite de páginas - continua até não ter mais dados.
+    Busca transações em um range específico de blocos.
+    Retorna lista de transações e o número de resultados.
     """
     url = 'https://api.etherscan.io/v2/api'
-    total_saved = 0
+    all_results = []
     page = 1
-
-    print(f"=== INICIANDO SYNC COMPLETO ===")
-    print(f"Carteira: {address}")
-    print(f"Bloco inicial: {start_block}")
-    print(f"Salvando a cada página: {save_each_page}")
-    print("=" * 40)
 
     while True:
         params = {
@@ -314,67 +308,185 @@ def fetch_and_save_all_transactions(address, start_block=0, save_each_page=True)
             'action': 'token1155tx',
             'address': address,
             'startblock': start_block,
-            'endblock': 99999999,
+            'endblock': end_block,
             'page': page,
             'offset': 1000,
-            'sort': 'asc',
+            'sort': sort,
             'apikey': POLYGONSCAN_API_KEY
         }
 
         try:
-            print(f"\n[Página {page}] Buscando...")
             response = requests.get(url, params=params, timeout=60)
             data = response.json()
 
             if data.get('status') == '1':
                 results = data.get('result', [])
-                count = len(results)
-                print(f"[Página {page}] Encontradas: {count} transações")
-
-                if count == 0:
-                    print(f"[Página {page}] Sem mais dados. Finalizando.")
+                if not results:
                     break
-
-                # Parse e salva imediatamente
-                parsed = []
-                for tx in results:
-                    tx['tokenType'] = 'ERC1155'
-                    p = parse_transaction(tx)
-                    if not p['is_error']:
-                        parsed.append(p)
-
-                if save_each_page and parsed:
-                    saved = save_transactions(parsed)
-                    total_saved += saved
-                    stats = get_stats()
-                    print(f"[Página {page}] Salvas: {saved} novas | Total no banco: {stats['total_transactions']}")
-
-                # Se retornou menos de 1000, acabou
-                if count < 1000:
-                    print(f"\n[Página {page}] Última página (< 1000 resultados). Finalizando.")
+                all_results.extend(results)
+                if len(results) < 1000:
                     break
-
                 page += 1
-                time.sleep(0.3)  # Rate limit
-
+                if page > 10:  # Limite de 10 páginas por range
+                    break
+                time.sleep(0.25)
             else:
-                msg = data.get('message', 'Unknown error')
-                result = data.get('result', '')
-                print(f"[Página {page}] API retornou erro: {msg} - {result}")
-
-                # Se for rate limit, espera e tenta novamente
-                if 'rate' in str(result).lower():
-                    print(f"[Página {page}] Rate limit detectado. Aguardando 5s...")
-                    time.sleep(5)
-                    continue
                 break
-
         except Exception as e:
-            print(f"[Página {page}] ERRO: {e}")
-            print(f"[Página {page}] Aguardando 3s e tentando novamente...")
-            time.sleep(3)
-            # Tenta a mesma página novamente
-            continue
+            print(f"Erro ao buscar blocos {start_block}-{end_block}: {e}")
+            break
+
+    return all_results
+
+
+def fetch_and_save_all_transactions(address, start_block=0, save_each_page=True, direction='both'):
+    """
+    Busca TODAS as transferências ERC1155 usando estratégia de ranges.
+
+    direction:
+    - 'asc': do mais antigo ao mais recente
+    - 'desc': do mais recente ao mais antigo
+    - 'both': busca em ambas direções para pegar tudo
+    """
+    url = 'https://api.etherscan.io/v2/api'
+    total_saved = 0
+
+    print(f"=== INICIANDO SYNC COMPLETO ===")
+    print(f"Carteira: {address}")
+    print(f"Direção: {direction}")
+    print("=" * 40)
+
+    # Primeiro: buscar do mais recente para o mais antigo (DESC)
+    # Isso garante que pegamos as transações mais recentes
+    if direction in ['desc', 'both']:
+        print("\n>>> FASE 1: Buscando transações mais recentes (DESC)...")
+        page = 1
+        while True:
+            params = {
+                'chainid': 137,
+                'module': 'account',
+                'action': 'token1155tx',
+                'address': address,
+                'startblock': 0,
+                'endblock': 99999999,
+                'page': page,
+                'offset': 1000,
+                'sort': 'desc',  # Mais recentes primeiro
+                'apikey': POLYGONSCAN_API_KEY
+            }
+
+            try:
+                print(f"[DESC Página {page}] Buscando...")
+                response = requests.get(url, params=params, timeout=60)
+                data = response.json()
+
+                if data.get('status') == '1':
+                    results = data.get('result', [])
+                    count = len(results)
+                    print(f"[DESC Página {page}] Encontradas: {count} transações")
+
+                    if count == 0:
+                        break
+
+                    parsed = []
+                    for tx in results:
+                        tx['tokenType'] = 'ERC1155'
+                        p = parse_transaction(tx)
+                        if not p['is_error']:
+                            parsed.append(p)
+
+                    if save_each_page and parsed:
+                        saved = save_transactions(parsed)
+                        total_saved += saved
+                        stats = get_stats()
+                        print(f"[DESC Página {page}] Salvas: {saved} novas | Total no banco: {stats['total_transactions']}")
+
+                    if count < 1000:
+                        break
+
+                    page += 1
+                    time.sleep(0.3)
+
+                else:
+                    msg = data.get('message', 'Unknown error')
+                    result = data.get('result', '')
+                    print(f"[DESC Página {page}] API erro: {msg}")
+
+                    if 'rate' in str(result).lower():
+                        time.sleep(5)
+                        continue
+                    break
+
+            except Exception as e:
+                print(f"[DESC Página {page}] ERRO: {e}")
+                time.sleep(3)
+                continue
+
+    # Segundo: buscar do mais antigo para o mais recente (ASC)
+    # Isso pega as transações antigas que não vieram no DESC
+    if direction in ['asc', 'both']:
+        print("\n>>> FASE 2: Buscando transações antigas (ASC)...")
+        page = 1
+        while True:
+            params = {
+                'chainid': 137,
+                'module': 'account',
+                'action': 'token1155tx',
+                'address': address,
+                'startblock': start_block,
+                'endblock': 99999999,
+                'page': page,
+                'offset': 1000,
+                'sort': 'asc',  # Mais antigas primeiro
+                'apikey': POLYGONSCAN_API_KEY
+            }
+
+            try:
+                print(f"[ASC Página {page}] Buscando...")
+                response = requests.get(url, params=params, timeout=60)
+                data = response.json()
+
+                if data.get('status') == '1':
+                    results = data.get('result', [])
+                    count = len(results)
+                    print(f"[ASC Página {page}] Encontradas: {count} transações")
+
+                    if count == 0:
+                        break
+
+                    parsed = []
+                    for tx in results:
+                        tx['tokenType'] = 'ERC1155'
+                        p = parse_transaction(tx)
+                        if not p['is_error']:
+                            parsed.append(p)
+
+                    if save_each_page and parsed:
+                        saved = save_transactions(parsed)
+                        total_saved += saved
+                        stats = get_stats()
+                        print(f"[ASC Página {page}] Salvas: {saved} novas | Total no banco: {stats['total_transactions']}")
+
+                    if count < 1000:
+                        break
+
+                    page += 1
+                    time.sleep(0.3)
+
+                else:
+                    msg = data.get('message', 'Unknown error')
+                    result = data.get('result', '')
+                    print(f"[ASC Página {page}] API erro: {msg}")
+
+                    if 'rate' in str(result).lower():
+                        time.sleep(5)
+                        continue
+                    break
+
+            except Exception as e:
+                print(f"[ASC Página {page}] ERRO: {e}")
+                time.sleep(3)
+                continue
 
     print("\n" + "=" * 40)
     print(f"=== SYNC COMPLETO FINALIZADO ===")
@@ -382,6 +494,7 @@ def fetch_and_save_all_transactions(address, start_block=0, save_each_page=True)
     print(f"Total de transações no banco: {stats['total_transactions']}")
     print(f"Buys: {stats['total_buys']} | Sells: {stats['total_sells']}")
     print(f"Mercados únicos: {stats['unique_markets']}")
+    print(f"Período: {stats.get('first_tx_date', 'N/A')} a {stats.get('last_tx_date', 'N/A')}")
     print("=" * 40)
 
     return total_saved
