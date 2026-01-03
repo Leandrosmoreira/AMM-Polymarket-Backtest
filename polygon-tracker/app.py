@@ -292,8 +292,103 @@ def get_transactions_by_date():
 
 # ============== API POLYGONSCAN ==============
 
+def fetch_and_save_all_transactions(address, start_block=0, save_each_page=True):
+    """
+    Busca TODAS as transferências ERC1155 e salva a cada página.
+    Sem limite de páginas - continua até não ter mais dados.
+    """
+    url = 'https://api.etherscan.io/v2/api'
+    total_saved = 0
+    page = 1
+
+    print(f"=== INICIANDO SYNC COMPLETO ===")
+    print(f"Carteira: {address}")
+    print(f"Bloco inicial: {start_block}")
+    print(f"Salvando a cada página: {save_each_page}")
+    print("=" * 40)
+
+    while True:
+        params = {
+            'chainid': 137,
+            'module': 'account',
+            'action': 'token1155tx',
+            'address': address,
+            'startblock': start_block,
+            'endblock': 99999999,
+            'page': page,
+            'offset': 1000,
+            'sort': 'asc',
+            'apikey': POLYGONSCAN_API_KEY
+        }
+
+        try:
+            print(f"\n[Página {page}] Buscando...")
+            response = requests.get(url, params=params, timeout=60)
+            data = response.json()
+
+            if data.get('status') == '1':
+                results = data.get('result', [])
+                count = len(results)
+                print(f"[Página {page}] Encontradas: {count} transações")
+
+                if count == 0:
+                    print(f"[Página {page}] Sem mais dados. Finalizando.")
+                    break
+
+                # Parse e salva imediatamente
+                parsed = []
+                for tx in results:
+                    tx['tokenType'] = 'ERC1155'
+                    p = parse_transaction(tx)
+                    if not p['is_error']:
+                        parsed.append(p)
+
+                if save_each_page and parsed:
+                    saved = save_transactions(parsed)
+                    total_saved += saved
+                    stats = get_stats()
+                    print(f"[Página {page}] Salvas: {saved} novas | Total no banco: {stats['total_transactions']}")
+
+                # Se retornou menos de 1000, acabou
+                if count < 1000:
+                    print(f"\n[Página {page}] Última página (< 1000 resultados). Finalizando.")
+                    break
+
+                page += 1
+                time.sleep(0.3)  # Rate limit
+
+            else:
+                msg = data.get('message', 'Unknown error')
+                result = data.get('result', '')
+                print(f"[Página {page}] API retornou erro: {msg} - {result}")
+
+                # Se for rate limit, espera e tenta novamente
+                if 'rate' in str(result).lower():
+                    print(f"[Página {page}] Rate limit detectado. Aguardando 5s...")
+                    time.sleep(5)
+                    continue
+                break
+
+        except Exception as e:
+            print(f"[Página {page}] ERRO: {e}")
+            print(f"[Página {page}] Aguardando 3s e tentando novamente...")
+            time.sleep(3)
+            # Tenta a mesma página novamente
+            continue
+
+    print("\n" + "=" * 40)
+    print(f"=== SYNC COMPLETO FINALIZADO ===")
+    stats = get_stats()
+    print(f"Total de transações no banco: {stats['total_transactions']}")
+    print(f"Buys: {stats['total_buys']} | Sells: {stats['total_sells']}")
+    print(f"Mercados únicos: {stats['unique_markets']}")
+    print("=" * 40)
+
+    return total_saved
+
+
 def get_token_transfers_paginated(address, start_block=0, max_pages=10):
-    """Busca transferências ERC1155 com paginação"""
+    """Busca transferências ERC1155 com paginação (versão simples para sync rápido)"""
     url = 'https://api.etherscan.io/v2/api'
     all_transfers = []
 
@@ -511,7 +606,7 @@ def sync_transactions():
 
 @app.route('/api/sync/full', methods=['POST'])
 def sync_full():
-    """Força sincronização completa"""
+    """Força sincronização completa (10 páginas)"""
     try:
         new_count = fetch_new_transactions(force_full=True)
         transactions = load_transactions(limit=1000)
@@ -525,6 +620,44 @@ def sync_full():
             'last_sync': last_sync,
             'new_transactions': new_count,
             'message': f'Sync completo! {stats["total_transactions"]} transações no banco.'
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/sync/all', methods=['POST'])
+def sync_all():
+    """
+    Sincroniza TODAS as transações da carteira.
+    Busca todas as páginas e salva a cada página.
+    Use este endpoint para baixar todo o histórico.
+    """
+    global last_sync
+    try:
+        # Busca do bloco 0 para pegar tudo
+        total_saved = fetch_and_save_all_transactions(
+            GABAGOOL_WALLET,
+            start_block=0,
+            save_each_page=True
+        )
+
+        last_sync = datetime.now().isoformat()
+        transactions = load_transactions(limit=1000)
+        stats = get_stats()
+
+        return jsonify({
+            'success': True,
+            'transactions': transactions,
+            'stats': stats,
+            'wallet': GABAGOOL_WALLET,
+            'last_sync': last_sync,
+            'new_transactions': total_saved,
+            'message': f'Sync ALL completo! {stats["total_transactions"]} transações no banco.'
         })
     except Exception as e:
         import traceback
