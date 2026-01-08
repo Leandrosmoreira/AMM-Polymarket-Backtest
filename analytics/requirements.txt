@@ -1,0 +1,34 @@
+# LADM Analytics - Dependências Python
+# =====================================
+# Instalar: pip install -r requirements.txt
+
+# Data Processing
+pandas>=2.0.0
+polars>=0.20.0
+numpy>=1.24.0
+pyarrow>=14.0.0
+
+# Database
+duckdb>=0.9.0
+
+# Statistics
+scipy>=1.11.0
+
+# Visualization
+matplotlib>=3.8.0
+seaborn>=0.13.0
+plotly>=5.18.0
+
+# Jupyter
+jupyter>=1.0.0
+jupyterlab>=4.0.0
+ipykernel>=6.0.0
+
+# Utilities
+rich>=13.0.0
+tqdm>=4.66.0
+httpx>=0.25.0
+
+# Optional: ML
+# scikit-learn>=1.3.0
+# xgboost>=2.0.0

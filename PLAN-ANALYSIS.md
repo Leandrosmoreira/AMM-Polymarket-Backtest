@@ -713,39 +713,57 @@ reports/
 
 # 🛠️ Technical Setup
 
+## VPS Structure (~/ladm-bot)
+```
+~/ladm-bot/
+├── config/
+├── data/
+│   ├── books/          # Order book snapshots (5s)
+│   ├── trades/         # Trades executados (RTDS WebSocket)
+│   ├── prices/         # Preços BTC (Chainlink + Binance)
+│   ├── events/         # Phase changes e market transitions
+│   └── state/          # State ticks (1s)
+├── analytics/          # << NOVA PASTA DE ANÁLISE
+│   ├── notebooks/      # Jupyter notebooks
+│   ├── scripts/        # Python scripts
+│   └── reports/        # Outputs por agent
+│       ├── validation/
+│       ├── trades/
+│       ├── books/
+│       ├── prices/
+│       ├── strategy/
+│       └── executive/
+├── dist/
+├── logs/
+├── monitoring/
+├── node_modules/
+├── scripts/
+├── src/
+└── tests/
+```
+
 ## Python Environment
 ```bash
 cd ~/ladm-bot
-python3 -m venv venv
-source venv/bin/activate
-pip install pandas numpy scipy matplotlib polars duckdb pyarrow rich tqdm httpx
+
+# Criar venv para analytics (separado do Node.js)
+python3 -m venv analytics/venv
+source analytics/venv/bin/activate
+
+# Instalar dependências
+pip install pandas numpy scipy matplotlib polars duckdb pyarrow rich tqdm httpx jupyter
 ```
 
-## Directory Structure
+## Directory Structure (já criado)
 ```bash
-mkdir -p analysis/{notebooks,scripts,reports}
-mkdir -p reports/{validation,trades,books,prices,strategy,executive}
+mkdir -p ~/ladm-bot/analytics/{notebooks,scripts}
+mkdir -p ~/ladm-bot/analytics/reports/{validation,trades,books,prices,strategy,executive}
 ```
 
 ## Quick Start Script
 ```python
-# analysis/scripts/load_data.py
-import polars as pl
-from pathlib import Path
-
-DATA_DIR = Path('/root/ladm-bot/data')
-
-def load_state(date: str) -> pl.DataFrame:
-    return pl.read_ndjson(DATA_DIR / 'state' / f'state-{date}.jsonl')
-
-def load_prices(date: str) -> pl.DataFrame:
-    return pl.read_ndjson(DATA_DIR / 'prices' / f'prices-{date}.jsonl')
-
-def load_books(date: str) -> pl.DataFrame:
-    return pl.read_ndjson(DATA_DIR / 'books' / f'books-{date}.jsonl')
-
-def load_trades(date: str) -> pl.DataFrame:
-    return pl.read_ndjson(DATA_DIR / 'trades' / f'trades-{date}.jsonl')
+# ~/ladm-bot/analytics/scripts/load_data.py
+# Ver arquivo completo em: analytics/scripts/load_data.py
 ```
 
 ---
