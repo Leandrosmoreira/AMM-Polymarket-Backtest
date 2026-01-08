@@ -260,7 +260,32 @@ class DataLoader:
 
     def load_trades(self, date: str, as_df: bool = True) -> Any:
         """Carrega trades executados de uma data específica."""
-        filepath = self.dirs['trades'] / f'trades-{date}.jsonl'
+        # Try multiple file naming patterns
+        patterns = [
+            f'trades-{date}.jsonl',
+            f'btc15m-{date}.jsonl',
+            f'btc15m-{date[:7]}.jsonl',  # btc15m-2026-01.jsonl
+        ]
+
+        filepath = None
+        for pattern in patterns:
+            candidate = self.dirs['trades'] / pattern
+            if candidate.exists():
+                filepath = candidate
+                break
+
+        # If no specific file found, try to find any matching file
+        if filepath is None:
+            # Search for files containing the date
+            year_month = date[:7]  # 2026-01
+            for f in self.dirs['trades'].glob('*.jsonl'):
+                if date in f.name or year_month in f.name:
+                    filepath = f
+                    break
+
+        if filepath is None:
+            filepath = self.dirs['trades'] / f'trades-{date}.jsonl'  # Default for error message
+
         records = self._load_jsonl_with_progress(filepath, "🔄 Trades")
         return self._to_dataframe(records, description="Trades") if as_df else records
 
