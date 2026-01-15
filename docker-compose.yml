@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  paper-trader:
+    build: .
+    container_name: paper-trader
+    restart: unless-stopped
+    environment:
+      # Polymarket API (opcional para paper trading)
+      - POLYMARKET_API_KEY=${POLYMARKET_API_KEY:-}
+      - POLYMARKET_API_SECRET=${POLYMARKET_API_SECRET:-}
+      - POLYMARKET_PRIVATE_KEY=${POLYMARKET_PRIVATE_KEY:-}
+    volumes:
+      # Persist logs and data
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: >
+      python run_paper.py
+      --bankroll ${BANKROLL:-1000}
+      --duration ${DURATION:-0}
+      --pair-cost-target ${PAIR_COST_TARGET:-0.97}
+      --max-order ${MAX_ORDER:-50}
+      --log-level ${LOG_LEVEL:-INFO}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
