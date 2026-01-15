@@ -4,6 +4,10 @@
 
 # HTTP client
 httpx>=0.25.0
+aiohttp>=3.9.0
+
+# WebSocket
+websockets>=12.0
 
 # Data manipulation
 pandas>=2.0.0
