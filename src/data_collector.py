@@ -1,6 +1,8 @@
 """
-Data Collector for Polymarket SOL 15-min Markets
+Data Collector for Polymarket 15-min Markets
 Collects historical market data and price history from Polymarket API
+
+Supports multiple assets: SOL, BTC, ETH, etc.
 """
 
 import httpx
@@ -10,6 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import time
 import logging
+import re
 from typing import Optional, List, Dict, Any
 import asyncio
 
@@ -17,6 +20,22 @@ from config import settings
 
 logging.basicConfig(level=settings.LOG_LEVEL, format=settings.LOG_FORMAT)
 logger = logging.getLogger(__name__)
+
+# Asset search patterns
+ASSET_PATTERNS = {
+    'BTC': {
+        'names': ['bitcoin', 'btc'],
+        'slug_patterns': ['btc-updown', 'btc-up-down', 'bitcoin-updown'],
+    },
+    'SOL': {
+        'names': ['solana', 'sol'],
+        'slug_patterns': ['sol-updown', 'sol-up-down', 'solana-updown'],
+    },
+    'ETH': {
+        'names': ['ethereum', 'eth'],
+        'slug_patterns': ['eth-updown', 'eth-up-down', 'ethereum-updown'],
+    },
+}
 
 
 class DataCollector:
@@ -36,6 +55,139 @@ class DataCollector:
         if wait_time > 0:
             time.sleep(wait_time)
         self.last_request_time = time.time()
+
+    def fetch_15min_markets(
+        self,
+        asset: str,
+        start_date: str,
+        end_date: str,
+        save_path: Optional[str] = None
+    ) -> pd.DataFrame:
+        """
+        Fetch all Up/Down 15-minute markets for a given asset.
+
+        Args:
+            asset: Asset symbol (BTC, SOL, ETH)
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+            save_path: Optional path to save CSV
+
+        Returns:
+            DataFrame with market information
+        """
+        asset = asset.upper()
+        if asset not in ASSET_PATTERNS:
+            logger.warning(f"Unknown asset {asset}, using generic search")
+            patterns = {
+                'names': [asset.lower()],
+                'slug_patterns': [f'{asset.lower()}-updown'],
+            }
+        else:
+            patterns = ASSET_PATTERNS[asset]
+
+        logger.info(f"Fetching {asset} 15-min markets from {start_date} to {end_date}")
+
+        all_markets = []
+        offset = 0
+        page = 0
+        max_pages = 200
+
+        # Search strategies
+        search_params_list = [
+            {"closed": "true", "limit": 100},
+        ]
+
+        for search_params in search_params_list:
+            offset = 0
+            page = 0
+
+            while page < max_pages:
+                self._rate_limit_wait()
+
+                params = search_params.copy()
+                params["offset"] = offset
+
+                try:
+                    response = self.client.get(
+                        f"{self.gamma_api}/markets",
+                        params=params
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                except Exception as e:
+                    logger.error(f"Error fetching markets: {e}")
+                    break
+
+                markets = data if isinstance(data, list) else data.get("data", data)
+
+                if not markets or not isinstance(markets, list):
+                    break
+
+                # Filter for target asset markets
+                for market in markets:
+                    question = (market.get("question") or "").lower()
+                    slug = (market.get("slug") or "").lower()
+
+                    # Check if it's the target asset
+                    is_target_asset = any(
+                        name in question or name in slug
+                        for name in patterns['names']
+                    )
+
+                    # Check if it's up/down market
+                    is_updown = any([
+                        "up or down" in question,
+                        "up/down" in question,
+                        "updown" in slug,
+                        "up-down" in slug,
+                    ])
+
+                    # Check if it's 15-min
+                    is_15min = any([
+                        "15" in question,
+                        "15m" in slug,
+                        "15-m" in slug,
+                        ":00-" in question and ":15" in question,
+                        ":15-" in question and ":30" in question,
+                        ":30-" in question and ":45" in question,
+                        ":45-" in question and ":00" in question,
+                    ])
+
+                    if is_target_asset and is_updown:
+                        market_data = self._parse_market(market)
+                        if market_data:
+                            if not any(m['market_id'] == market_data['market_id'] for m in all_markets):
+                                all_markets.append(market_data)
+
+                page += 1
+                offset += 100
+
+                if page % 20 == 0:
+                    logger.info(f"Page {page}: Found {len(all_markets)} {asset} markets")
+
+                if len(markets) < 100:
+                    break
+
+        df = pd.DataFrame(all_markets)
+
+        if not df.empty:
+            df['start_time'] = pd.to_datetime(df['start_time'], errors='coerce')
+            df['end_time'] = pd.to_datetime(df['end_time'], errors='coerce')
+            df = df.dropna(subset=['start_time'])
+
+            start = pd.to_datetime(start_date)
+            end = pd.to_datetime(end_date)
+            df = df[(df['start_time'] >= start) & (df['start_time'] <= end)]
+            df = df.sort_values('start_time').reset_index(drop=True)
+
+            logger.info(f"Total {asset} markets found: {len(df)}")
+
+            if save_path:
+                Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+                df.to_csv(save_path, index=False)
+                logger.info(f"Saved to {save_path}")
+
+        return df
 
     def fetch_sol_15min_markets(
         self,
