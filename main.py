@@ -19,6 +19,7 @@ from config import settings
 from config.risk_params import RiskParams
 from src.data_collector import DataCollector
 from src.backtest_engine import BacktestEngine, run_backtest
+from src.ltm_backtest_engine import LTMBacktestEngine, run_ltm_backtest
 from src.metrics import PerformanceMetrics
 from src.visualizer import BacktestVisualizer, generate_report
 from src.market_analyzer import MarketAnalyzer
@@ -271,6 +272,28 @@ def main():
     test_parser = subparsers.add_parser('test', help='Run quick test with simulated data')
     test_parser.add_argument('--capital', type=float, default=5000, help='Initial capital')
 
+    # LTM backtest command
+    ltm_parser = subparsers.add_parser('ltm-backtest', help='Run LTM-enhanced backtest')
+    ltm_parser.add_argument('--markets', type=str, help='Path to markets CSV')
+    ltm_parser.add_argument('--prices', type=str, help='Path to prices file')
+    ltm_parser.add_argument('--capital', type=float, default=5000, help='Initial capital')
+    ltm_parser.add_argument('--policy', type=str, default='config/ltm_policy.yaml', help='LTM policy YAML')
+    ltm_parser.add_argument('--use-decay', action='store_true', default=True, help='Use decay model')
+    ltm_parser.add_argument('--use-bandit', action='store_true', help='Use bandit auto-tuning')
+    ltm_parser.add_argument('--output', type=str, help='Output directory')
+
+    # LTM test command
+    ltm_test_parser = subparsers.add_parser('ltm-test', help='Run LTM test with simulated data')
+    ltm_test_parser.add_argument('--capital', type=float, default=5000, help='Initial capital')
+    ltm_test_parser.add_argument('--use-bandit', action='store_true', help='Use bandit auto-tuning')
+    ltm_test_parser.add_argument('--n-markets', type=int, default=200, help='Number of simulated markets')
+
+    # Build LTM policy command
+    build_policy_parser = subparsers.add_parser('build-policy', help='Build LTM policy from data')
+    build_policy_parser.add_argument('--data', type=str, help='Path to snapshot data')
+    build_policy_parser.add_argument('--output', type=str, default='config/ltm_policy.yaml', help='Output path')
+    build_policy_parser.add_argument('--simulate', action='store_true', help='Generate from simulated data')
+
     args = parser.parse_args()
 
     if args.command == 'collect':
@@ -281,6 +304,12 @@ def main():
         run_backtest_cmd(args)
     elif args.command == 'test':
         run_test(args)
+    elif args.command == 'ltm-backtest':
+        run_ltm_backtest_cmd(args)
+    elif args.command == 'ltm-test':
+        run_ltm_test(args)
+    elif args.command == 'build-policy':
+        run_build_policy(args)
     else:
         parser.print_help()
 
@@ -329,6 +358,215 @@ def run_test(args):
     print(report)
 
     logger.info("Test complete!")
+
+
+def run_ltm_backtest_cmd(args):
+    """Run LTM-enhanced backtest."""
+    import pandas as pd
+
+    logger.info("Starting LTM-enhanced backtest...")
+
+    # Load data
+    markets_path = args.markets or f"{settings.DATA_RAW_PATH}/sol_markets.csv"
+    prices_path = args.prices or f"{settings.DATA_PROCESSED_PATH}/all_prices.parquet"
+
+    if not Path(markets_path).exists():
+        logger.error(f"Markets file not found: {markets_path}")
+        logger.info("Run with 'collect' first to gather data, or use 'ltm-test' for simulated data")
+        return
+
+    markets_df = pd.read_csv(markets_path)
+
+    if Path(prices_path).exists():
+        if prices_path.endswith('.parquet'):
+            prices_df = pd.read_parquet(prices_path)
+        else:
+            prices_df = pd.read_csv(prices_path)
+    else:
+        logger.warning("No price data found, using simulated prices")
+        prices_df = _create_simulated_prices(markets_df)
+
+    # Run LTM backtest
+    engine = LTMBacktestEngine(
+        initial_capital=args.capital,
+        ltm_policy_path=args.policy,
+        use_decay_model=args.use_decay,
+        use_bandit=args.use_bandit,
+    )
+
+    results = engine.run(markets_df, prices_df, verbose=True)
+
+    # Print LTM report
+    print("\n" + engine.generate_ltm_report())
+
+    # Print summary
+    metrics = PerformanceMetrics()
+    report = metrics.generate_summary_report(results['metrics'])
+    print(report)
+
+    # Generate visual report
+    if args.output:
+        output_dir = args.output
+    else:
+        output_dir = f"{settings.DATA_RESULTS_PATH}/ltm_backtest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    generate_report(results, output_dir)
+
+    # Save LTM-specific data
+    ltm_paths = engine.save_ltm_data(output_dir)
+    logger.info(f"LTM data saved: {ltm_paths}")
+
+    # Save results
+    results['trades'].to_csv(f"{output_dir}/trades.csv", index=False)
+    results['portfolio_history'].to_csv(f"{output_dir}/portfolio_history.csv", index=False)
+
+    logger.info(f"Report saved to {output_dir}")
+
+
+def run_ltm_test(args):
+    """Run LTM test with simulated data."""
+    import pandas as pd
+    import numpy as np
+
+    logger.info("Running LTM test with simulated data...")
+    logger.info(f"Simulating {args.n_markets} markets...")
+
+    # Create simulated markets
+    np.random.seed(42)
+    n_markets = args.n_markets
+
+    markets = []
+    base_time = datetime.now() - timedelta(days=14)
+
+    for i in range(n_markets):
+        start = base_time + timedelta(minutes=15 * i)
+        end = start + timedelta(minutes=15)
+
+        markets.append({
+            'market_id': f'market_{i}',
+            'condition_id': f'cond_{i}',
+            'question': f'Solana Up or Down - Test {i}',
+            'start_time': start,
+            'end_time': end,
+            'outcome': 'Up' if np.random.random() > 0.5 else 'Down',
+            'yes_token_id': f'yes_{i}',
+            'no_token_id': f'no_{i}',
+            'volume': np.random.uniform(500, 5000),
+            'liquidity': np.random.uniform(1000, 10000),
+        })
+
+    markets_df = pd.DataFrame(markets)
+    prices_df = _create_ltm_simulated_prices(markets_df)
+
+    # Run LTM backtest
+    engine = LTMBacktestEngine(
+        initial_capital=args.capital,
+        use_decay_model=True,
+        use_bandit=args.use_bandit,
+        collect_snapshots=True,
+    )
+
+    results = engine.run(markets_df, prices_df, verbose=True)
+
+    # Print LTM report
+    print("\n" + engine.generate_ltm_report())
+
+    # Print summary
+    metrics = PerformanceMetrics()
+    report = metrics.generate_summary_report(results['metrics'])
+    print(report)
+
+    # Compare with base backtest
+    logger.info("\nComparing with base backtest (no LTM)...")
+    base_engine = BacktestEngine(initial_capital=args.capital)
+    base_results = base_engine.run(markets_df.copy(), prices_df.copy(), verbose=False)
+
+    print("\n" + "=" * 60)
+    print("COMPARISON: LTM vs Base Backtest")
+    print("=" * 60)
+    print(f"  LTM Return: {results['summary']['total_return_pct']:.2f}%")
+    print(f"  Base Return: {base_results['summary']['total_return_pct']:.2f}%")
+    print(f"  Improvement: {results['summary']['total_return_pct'] - base_results['summary']['total_return_pct']:.2f}%")
+    print(f"  LTM Trades: {results['summary']['total_trades']}")
+    print(f"  Base Trades: {base_results['summary']['total_trades']}")
+    print("=" * 60)
+
+    logger.info("LTM test complete!")
+
+
+def _create_ltm_simulated_prices(markets_df):
+    """Create simulated price data with realistic LTM patterns."""
+    import pandas as pd
+    import numpy as np
+
+    all_prices = []
+
+    for _, market in markets_df.iterrows():
+        market_id = market['market_id']
+        start = pd.to_datetime(market['start_time'])
+        end = pd.to_datetime(market['end_time'])
+
+        # Generate 30 price points (every 30 seconds)
+        timestamps = pd.date_range(start, end, periods=30)
+
+        # Market characteristics
+        base_spread = np.random.uniform(-0.04, -0.01)
+
+        for idx, ts in enumerate(timestamps):
+            t_remaining = (end - ts).total_seconds()
+            t_elapsed = (ts - start).total_seconds()
+            pct_elapsed = t_elapsed / 900
+
+            # Spread evolution - narrower in middle, wider at ends
+            if pct_elapsed < 0.2:  # Early
+                spread_mult = 1.1
+            elif pct_elapsed < 0.7:  # Middle - best conditions
+                spread_mult = 0.85
+            elif pct_elapsed < 0.9:  # Late
+                spread_mult = 1.2
+            else:  # Final
+                spread_mult = 1.5
+
+            spread = base_spread * spread_mult + np.random.normal(0, 0.005)
+
+            # Price decomposition
+            imbalance = np.random.normal(0, 0.02)
+            price_yes = np.clip(0.5 + imbalance + spread / 2, 0.35, 0.65)
+            price_no = np.clip(0.5 - imbalance + spread / 2, 0.35, 0.65)
+
+            # Volume accumulation
+            volume = np.random.uniform(100, 500) * (1 + pct_elapsed)
+
+            all_prices.append({
+                'timestamp': ts,
+                'market_id': market_id,
+                'price_yes': price_yes,
+                'price_no': price_no,
+                'spread': price_yes + price_no - 1.0,
+                'volume': volume,
+            })
+
+    return pd.DataFrame(all_prices)
+
+
+def run_build_policy(args):
+    """Build LTM policy from data."""
+    import subprocess
+    import sys
+
+    script_path = Path(__file__).parent / 'scripts' / 'build_ltm_policy.py'
+
+    cmd = [sys.executable, str(script_path)]
+
+    if args.data:
+        cmd.extend(['--data', args.data])
+    if args.simulate:
+        cmd.append('--simulate')
+    cmd.extend(['--output', args.output])
+    cmd.append('--report')
+
+    subprocess.run(cmd)
 
 
 if __name__ == '__main__':

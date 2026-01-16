@@ -7,3 +7,18 @@ from .metrics import PerformanceMetrics
 from .visualizer import BacktestVisualizer
 from .spread_calculator import SpreadCalculator
 from .market_analyzer import MarketAnalyzer
+
+# LTM-enhanced components
+from .ltm_risk_manager import LTMRiskManager
+from .ltm_backtest_engine import LTMBacktestEngine, run_ltm_backtest
+from .ltm import (
+    LTMCollector,
+    LTMSnapshot,
+    LTMFeatures,
+    BucketStats,
+    LTMPolicy,
+    BucketPolicy,
+    PairCostDecay,
+    DecayMetrics,
+    LTMBanditManager,
+)

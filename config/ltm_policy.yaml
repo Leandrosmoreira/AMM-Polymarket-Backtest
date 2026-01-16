@@ -1,0 +1,248 @@
+# LTM Policy Configuration
+# Liquidity Time Model - Trading rules by time bucket
+#
+# Each bucket represents a 60-second window of the 15-minute market:
+# - Bucket 0: 840-900s remaining (start)
+# - Bucket 14: 0-60s remaining (end)
+
+metadata:
+  num_buckets: 15
+  bucket_size_sec: 60
+  total_time_sec: 900
+
+defaults:
+  edge_required: 0.02        # 2% edge minimum (pair_cost < 0.98)
+  max_spread: 0.05           # Maximum spread width
+  min_depth: 100             # Minimum order book depth
+  max_size: 100              # Maximum shares per order
+  max_imbalance: 0.3         # Maximum YES/NO position imbalance
+
+stop_settings:
+  last_n_buckets: 1          # Stop trading in last N buckets
+  threshold_sec: 60          # Stop if less than X seconds remaining
+
+# Bucket-specific policies
+# Phases:
+#   - EARLY (0-4): Market opening, liquidity building
+#   - MIDDLE (5-10): Best trading conditions
+#   - LATE (11-12): Reduced liquidity, be conservative
+#   - FINAL (13-14): Very risky, mostly stop trading
+
+buckets:
+  # === EARLY PHASE (buckets 0-4) ===
+  # Market just opened, liquidity still building
+  0:
+    bucket_index: 0
+    time_remaining_start: 900
+    time_remaining_end: 840
+    edge_required: 0.025      # Slightly higher edge needed
+    max_spread_allowed: 0.04
+    min_depth_required: 100
+    max_size: 80
+    size_multiplier: 0.8
+    stop_trading: false
+    max_imbalance: 0.35
+    weight: 0.8
+    min_fill_rate_required: 0.85
+
+  1:
+    bucket_index: 1
+    time_remaining_start: 840
+    time_remaining_end: 780
+    edge_required: 0.022
+    max_spread_allowed: 0.045
+    min_depth_required: 100
+    max_size: 90
+    size_multiplier: 0.9
+    stop_trading: false
+    max_imbalance: 0.35
+    weight: 0.85
+    min_fill_rate_required: 0.85
+
+  2:
+    bucket_index: 2
+    time_remaining_start: 780
+    time_remaining_end: 720
+    edge_required: 0.02
+    max_spread_allowed: 0.05
+    min_depth_required: 100
+    max_size: 100
+    size_multiplier: 1.0
+    stop_trading: false
+    max_imbalance: 0.3
+    weight: 0.9
+    min_fill_rate_required: 0.8
+
+  3:
+    bucket_index: 3
+    time_remaining_start: 720
+    time_remaining_end: 660
+    edge_required: 0.02
+    max_spread_allowed: 0.05
+    min_depth_required: 100
+    max_size: 100
+    size_multiplier: 1.0
+    stop_trading: false
+    max_imbalance: 0.3
+    weight: 0.9
+    min_fill_rate_required: 0.8
+
+  4:
+    bucket_index: 4
+    time_remaining_start: 660
+    time_remaining_end: 600
+    edge_required: 0.018
+    max_spread_allowed: 0.05
+    min_depth_required: 100
+    max_size: 110
+    size_multiplier: 1.0
+    stop_trading: false
+    max_imbalance: 0.3
+    weight: 0.95
+    min_fill_rate_required: 0.8
+
+  # === MIDDLE PHASE (buckets 5-10) ===
+  # Best trading conditions - lower edge OK, larger size allowed
+  5:
+    bucket_index: 5
+    time_remaining_start: 600
+    time_remaining_end: 540
+    edge_required: 0.015      # Lower edge acceptable
+    max_spread_allowed: 0.05
+    min_depth_required: 80
+    max_size: 120             # Can size up
+    size_multiplier: 1.2
+    stop_trading: false
+    max_imbalance: 0.3
+    weight: 1.1
+    min_fill_rate_required: 0.8
+
+  6:
+    bucket_index: 6
+    time_remaining_start: 540
+    time_remaining_end: 480
+    edge_required: 0.015
+    max_spread_allowed: 0.05
+    min_depth_required: 80
+    max_size: 120
+    size_multiplier: 1.2
+    stop_trading: false
+    max_imbalance: 0.3
+    weight: 1.2               # Most aggressive
+    min_fill_rate_required: 0.8
+
+  7:
+    bucket_index: 7
+    time_remaining_start: 480
+    time_remaining_end: 420
+    edge_required: 0.015
+    max_spread_allowed: 0.05
+    min_depth_required: 80
+    max_size: 120
+    size_multiplier: 1.2
+    stop_trading: false
+    max_imbalance: 0.3
+    weight: 1.2
+    min_fill_rate_required: 0.8
+
+  8:
+    bucket_index: 8
+    time_remaining_start: 420
+    time_remaining_end: 360
+    edge_required: 0.015
+    max_spread_allowed: 0.05
+    min_depth_required: 80
+    max_size: 110
+    size_multiplier: 1.1
+    stop_trading: false
+    max_imbalance: 0.3
+    weight: 1.15
+    min_fill_rate_required: 0.8
+
+  9:
+    bucket_index: 9
+    time_remaining_start: 360
+    time_remaining_end: 300
+    edge_required: 0.017
+    max_spread_allowed: 0.05
+    min_depth_required: 100
+    max_size: 100
+    size_multiplier: 1.0
+    stop_trading: false
+    max_imbalance: 0.28
+    weight: 1.0
+    min_fill_rate_required: 0.8
+
+  10:
+    bucket_index: 10
+    time_remaining_start: 300
+    time_remaining_end: 240
+    edge_required: 0.02
+    max_spread_allowed: 0.045
+    min_depth_required: 100
+    max_size: 90
+    size_multiplier: 0.9
+    stop_trading: false
+    max_imbalance: 0.25
+    weight: 0.9
+    min_fill_rate_required: 0.8
+
+  # === LATE PHASE (buckets 11-12) ===
+  # Liquidity declining, be more conservative
+  11:
+    bucket_index: 11
+    time_remaining_start: 240
+    time_remaining_end: 180
+    edge_required: 0.025      # Higher edge required
+    max_spread_allowed: 0.04
+    min_depth_required: 120
+    max_size: 70              # Smaller size
+    size_multiplier: 0.7
+    stop_trading: false
+    max_imbalance: 0.2        # Tighter imbalance
+    weight: 0.6
+    min_fill_rate_required: 0.85
+
+  12:
+    bucket_index: 12
+    time_remaining_start: 180
+    time_remaining_end: 120
+    edge_required: 0.03       # Much higher edge
+    max_spread_allowed: 0.035
+    min_depth_required: 150
+    max_size: 50
+    size_multiplier: 0.5
+    stop_trading: false
+    max_imbalance: 0.15
+    weight: 0.4
+    min_fill_rate_required: 0.9
+
+  # === FINAL PHASE (buckets 13-14) ===
+  # Very risky, approaching settlement
+  13:
+    bucket_index: 13
+    time_remaining_start: 120
+    time_remaining_end: 60
+    edge_required: 0.04       # Very high edge only
+    max_spread_allowed: 0.03
+    min_depth_required: 200
+    max_size: 30
+    size_multiplier: 0.3
+    stop_trading: false       # Can still trade with extreme caution
+    max_imbalance: 0.1        # Very tight imbalance
+    weight: 0.2
+    min_fill_rate_required: 0.95
+
+  14:
+    bucket_index: 14
+    time_remaining_start: 60
+    time_remaining_end: 0
+    edge_required: 0.05
+    max_spread_allowed: 0.025
+    min_depth_required: 300
+    max_size: 0               # No new positions
+    size_multiplier: 0.0
+    stop_trading: true        # STOP - too close to settlement
+    max_imbalance: 0.05
+    weight: 0.0
+    min_fill_rate_required: 1.0
