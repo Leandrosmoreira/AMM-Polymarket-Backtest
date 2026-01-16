@@ -3,6 +3,13 @@ Data Collector for Polymarket 15-min Markets
 Collects historical market data and price history from Polymarket API
 
 Supports multiple assets: SOL, BTC, ETH, etc.
+
+Best practices implemented:
+- Aggressive local caching
+- Batch requests instead of polling
+- Explicit User-Agent
+- Automatic fallback to simulation
+- LIVE_MODE vs SIM_MODE separation
 """
 
 import httpx
@@ -13,6 +20,8 @@ from pathlib import Path
 import time
 import logging
 import re
+import json
+import hashlib
 from typing import Optional, List, Dict, Any
 import asyncio
 
@@ -20,6 +29,24 @@ from config import settings
 
 logging.basicConfig(level=settings.LOG_LEVEL, format=settings.LOG_FORMAT)
 logger = logging.getLogger(__name__)
+
+# === MODES ===
+class DataMode:
+    LIVE = "live"      # Fetch from API
+    SIM = "sim"        # Use simulated data
+    CACHE = "cache"    # Use cached data if available, fallback to API
+
+# === CACHE SETTINGS ===
+CACHE_DIR = Path("data/cache")
+CACHE_TTL_HOURS = 1  # Cache validity in hours
+
+# === HTTP SETTINGS ===
+USER_AGENT = "AMM-Backtest/1.0 (Polymarket Research Bot; +https://github.com/Leandrosmoreira/AMM-Polymarket-Backtest)"
+DEFAULT_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 # Asset search patterns
 ASSET_PATTERNS = {
@@ -38,15 +65,101 @@ ASSET_PATTERNS = {
 }
 
 
+class LocalCache:
+    """Simple file-based cache for API responses."""
+
+    def __init__(self, cache_dir: Path = CACHE_DIR, ttl_hours: int = CACHE_TTL_HOURS):
+        self.cache_dir = cache_dir
+        self.ttl_hours = ttl_hours
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_cache_key(self, endpoint: str, params: Dict) -> str:
+        """Generate cache key from endpoint and params."""
+        params_str = json.dumps(params, sort_keys=True)
+        key = f"{endpoint}:{params_str}"
+        return hashlib.md5(key.encode()).hexdigest()
+
+    def _get_cache_path(self, cache_key: str) -> Path:
+        return self.cache_dir / f"{cache_key}.json"
+
+    def get(self, endpoint: str, params: Dict) -> Optional[Any]:
+        """Get cached response if valid."""
+        cache_key = self._get_cache_key(endpoint, params)
+        cache_path = self._get_cache_path(cache_key)
+
+        if not cache_path.exists():
+            return None
+
+        try:
+            with open(cache_path, 'r') as f:
+                cached = json.load(f)
+
+            # Check TTL
+            cached_time = datetime.fromisoformat(cached['timestamp'])
+            if datetime.now() - cached_time > timedelta(hours=self.ttl_hours):
+                logger.debug(f"Cache expired for {endpoint}")
+                return None
+
+            logger.debug(f"Cache hit for {endpoint}")
+            return cached['data']
+
+        except Exception as e:
+            logger.warning(f"Cache read error: {e}")
+            return None
+
+    def set(self, endpoint: str, params: Dict, data: Any) -> None:
+        """Cache response data."""
+        cache_key = self._get_cache_key(endpoint, params)
+        cache_path = self._get_cache_path(cache_key)
+
+        try:
+            with open(cache_path, 'w') as f:
+                json.dump({
+                    'timestamp': datetime.now().isoformat(),
+                    'endpoint': endpoint,
+                    'params': params,
+                    'data': data,
+                }, f)
+            logger.debug(f"Cached response for {endpoint}")
+        except Exception as e:
+            logger.warning(f"Cache write error: {e}")
+
+    def clear(self) -> None:
+        """Clear all cached data."""
+        for f in self.cache_dir.glob("*.json"):
+            f.unlink()
+        logger.info("Cache cleared")
+
+
 class DataCollector:
     """Collector for Polymarket market data."""
 
-    def __init__(self):
+    def __init__(self, mode: str = DataMode.CACHE):
+        """
+        Initialize collector.
+
+        Args:
+            mode: DataMode.LIVE, DataMode.SIM, or DataMode.CACHE
+        """
+        self.mode = mode
         self.gamma_api = settings.GAMMA_API_BASE
         self.clob_api = settings.CLOB_API_BASE
         self.rate_limit = settings.MAX_REQUESTS_PER_SECOND
         self.last_request_time = 0
-        self.client = httpx.Client(timeout=settings.REQUEST_TIMEOUT)
+
+        # HTTP client with proper headers
+        self.client = httpx.Client(
+            timeout=settings.REQUEST_TIMEOUT,
+            headers=DEFAULT_HEADERS,
+        )
+
+        # Local cache
+        self.cache = LocalCache()
+
+        # Request stats
+        self.requests_made = 0
+        self.cache_hits = 0
+        self.errors = 0
 
     def _rate_limit_wait(self):
         """Enforce rate limiting between requests."""
@@ -55,6 +168,54 @@ class DataCollector:
         if wait_time > 0:
             time.sleep(wait_time)
         self.last_request_time = time.time()
+
+    def _fetch_with_cache(self, endpoint: str, params: Dict) -> Optional[Any]:
+        """
+        Fetch data with cache support.
+
+        Checks cache first (if mode allows), then fetches from API.
+        """
+        # Check cache first (unless LIVE mode)
+        if self.mode != DataMode.LIVE:
+            cached = self.cache.get(endpoint, params)
+            if cached is not None:
+                self.cache_hits += 1
+                return cached
+
+        # SIM mode: don't make API calls
+        if self.mode == DataMode.SIM:
+            logger.info("SIM mode: skipping API call")
+            return None
+
+        # Make API request
+        self._rate_limit_wait()
+        self.requests_made += 1
+
+        try:
+            response = self.client.get(endpoint, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            # Cache the response
+            self.cache.set(endpoint, params, data)
+
+            return data
+
+        except httpx.HTTPStatusError as e:
+            self.errors += 1
+            if e.response.status_code == 403:
+                logger.warning(f"403 Forbidden - API may be rate limiting or blocking requests")
+            elif e.response.status_code == 429:
+                logger.warning(f"429 Too Many Requests - backing off")
+                time.sleep(5)  # Extra backoff
+            else:
+                logger.error(f"HTTP error {e.response.status_code}: {e}")
+            return None
+
+        except Exception as e:
+            self.errors += 1
+            logger.error(f"Request error: {e}")
+            return None
 
     def fetch_15min_markets(
         self,
@@ -86,15 +247,16 @@ class DataCollector:
             patterns = ASSET_PATTERNS[asset]
 
         logger.info(f"Fetching {asset} 15-min markets from {start_date} to {end_date}")
+        logger.info(f"Mode: {self.mode.upper()}")
 
         all_markets = []
         offset = 0
         page = 0
         max_pages = 200
 
-        # Search strategies
+        # Search with larger batch size to reduce requests
         search_params_list = [
-            {"closed": "true", "limit": 100},
+            {"closed": "true", "limit": 100},  # Batch of 100
         ]
 
         for search_params in search_params_list:
@@ -102,20 +264,14 @@ class DataCollector:
             page = 0
 
             while page < max_pages:
-                self._rate_limit_wait()
-
                 params = search_params.copy()
                 params["offset"] = offset
 
-                try:
-                    response = self.client.get(
-                        f"{self.gamma_api}/markets",
-                        params=params
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                except Exception as e:
-                    logger.error(f"Error fetching markets: {e}")
+                # Use cached fetch
+                data = self._fetch_with_cache(f"{self.gamma_api}/markets", params)
+
+                if data is None:
+                    logger.warning("No data returned, stopping fetch")
                     break
 
                 markets = data if isinstance(data, list) else data.get("data", data)
@@ -479,8 +635,21 @@ class DataCollector:
 
         return pd.DataFrame()
 
+    def get_stats(self) -> Dict[str, Any]:
+        """Get collector statistics."""
+        return {
+            'mode': self.mode,
+            'requests_made': self.requests_made,
+            'cache_hits': self.cache_hits,
+            'errors': self.errors,
+            'cache_hit_rate': self.cache_hits / max(1, self.requests_made + self.cache_hits),
+        }
+
     def close(self):
-        """Close the HTTP client."""
+        """Close the HTTP client and show stats."""
+        stats = self.get_stats()
+        logger.info(f"Collector stats: {stats['requests_made']} requests, "
+                   f"{stats['cache_hits']} cache hits, {stats['errors']} errors")
         self.client.close()
 
 

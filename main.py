@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config import settings
 from config.risk_params import RiskParams
-from src.data_collector import DataCollector
+from src.data_collector import DataCollector, DataMode
 from src.backtest_engine import BacktestEngine, run_backtest
 from src.ltm_backtest_engine import LTMBacktestEngine, run_ltm_backtest
 from src.metrics import PerformanceMetrics
@@ -36,12 +36,18 @@ logger = logging.getLogger(__name__)
 def collect_data(args):
     """Collect market data from Polymarket API."""
     asset = getattr(args, 'asset', 'SOL').upper()
+    mode = getattr(args, 'mode', 'cache')
     logger.info(f"Starting data collection for {asset}...")
+    logger.info(f"Mode: {mode.upper()}")
 
     end_date = datetime.now()
     start_date = end_date - timedelta(days=args.days)
 
-    collector = DataCollector()
+    # Map mode string to DataMode
+    mode_map = {'live': DataMode.LIVE, 'cache': DataMode.CACHE, 'sim': DataMode.SIM}
+    data_mode = mode_map.get(mode, DataMode.CACHE)
+
+    collector = DataCollector(mode=data_mode)
 
     try:
         # Fetch markets using generic method
@@ -256,6 +262,8 @@ def main():
     collect_parser.add_argument('--asset', type=str, default='SOL', help='Asset to collect (SOL, BTC, ETH)')
     collect_parser.add_argument('--days', type=int, default=90, help='Days of history')
     collect_parser.add_argument('--fetch-prices', action='store_true', help='Also fetch price history')
+    collect_parser.add_argument('--mode', type=str, default='cache', choices=['live', 'cache', 'sim'],
+                               help='Data mode: live=API only, cache=API+cache, sim=simulation only')
 
     # Analyze command
     analyze_parser = subparsers.add_parser('analyze', help='Run analysis on data')
