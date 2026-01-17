@@ -6,6 +6,7 @@ data/results/
 # Runtime files
 trades.json
 *.log
+logs/
 
 # Environment files (use .env.example or .env.paper as templates)
 .env
