@@ -1,11 +1,19 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env file from project root if present.
+# Find .env file in the same directory as this module
+_module_dir = Path(__file__).parent
+_env_file = _module_dir / ".env"
+
+# Load .env file from module directory if present.
 # Do NOT override existing environment variables (so CI/terminal env wins over .env).
-load_dotenv(override=False)
+if _env_file.exists():
+    load_dotenv(_env_file, override=False)
+else:
+    load_dotenv(override=False)
 
 
 @dataclass

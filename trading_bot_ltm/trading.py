@@ -2,6 +2,7 @@ import functools
 import logging
 from typing import Optional
 import time
+import uuid
 
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import (
@@ -19,38 +20,149 @@ from .config import Settings
 logger = logging.getLogger(__name__)
 
 
-_cached_client = None
+class MockClobClient:
+    """Mock client for paper trading (dry_run mode)."""
 
-def get_client(settings: Settings) -> ClobClient:
-    global _cached_client
-    
+    def __init__(self, sim_balance: float = 1000.0):
+        self.sim_balance = sim_balance
+        self._orders = {}
+        self._positions = {}
+        logger.info("📝 Using MockClobClient for paper trading (DRY_RUN=true)")
+        logger.info(f"   Simulated balance: ${sim_balance:.2f}")
+
+    def get_address(self):
+        return "0xPAPER_TRADING_WALLET"
+
+    def get_balance_allowance(self, params):
+        # Return balance in wei (6 decimals for USDC)
+        return {"balance": str(int(self.sim_balance * 1_000_000))}
+
+    def create_order(self, order_args, options=None):
+        """Mock order creation - just return the args as a signed order."""
+        return {
+            "token_id": order_args.token_id,
+            "price": order_args.price,
+            "size": order_args.size,
+            "side": order_args.side,
+            "mock": True
+        }
+
+    def post_order(self, signed_order, order_type=None):
+        """Mock order posting - simulate immediate fill."""
+        order_id = f"PAPER_{uuid.uuid4().hex[:8]}"
+        self._orders[order_id] = {
+            "orderID": order_id,
+            "status": "filled",
+            "filled_size": signed_order.get("size", 0),
+            "original_size": signed_order.get("size", 0),
+            **signed_order
+        }
+        return self._orders[order_id]
+
+    def post_orders(self, orders_args):
+        """Mock batch order posting."""
+        return [self.post_order(o.order, o.orderType) for o in orders_args]
+
+    def get_order(self, order_id):
+        return self._orders.get(order_id, {"status": "not_found"})
+
+    def cancel_orders(self, order_ids):
+        for oid in order_ids:
+            if oid in self._orders:
+                self._orders[oid]["status"] = "cancelled"
+        return {"cancelled": order_ids}
+
+    def get_positions(self):
+        return list(self._positions.values())
+
+    def get_order_book(self, token_id: str = None):
+        """Generate simulated order book with realistic spreads and arbitrage opportunities."""
+        import random
+        import time
+
+        # Use a seeded random based on current second to ensure YES and NO books
+        # are correlated (both low = opportunity, both normal = no opportunity)
+        # Seed changes every 5 seconds to give more stable windows
+        current_time = int(time.time())
+        seed = current_time // 5
+        rng = random.Random(seed)
+
+        # For paper trading, generate prices that create arbitrage opportunities
+        # Arbitrage exists when YES_ask + NO_ask < $1.00 (target threshold ~0.991)
+        # Simple alternating pattern: odd seeds = opportunity, even = no opportunity
+        # This gives 50% opportunity rate with predictable timing
+        opportunity = (current_time % 10) < 5  # 5 seconds on, 5 seconds off
+
+        if opportunity:
+            # Create arbitrage opportunity: each side ~0.47-0.485, so pair cost ~0.94-0.97
+            base_price = 0.475 + (rng.random() * 0.01)  # 0.475 to 0.485
+        else:
+            # No opportunity: each side ~0.50-0.51, so pair cost ~1.00-1.02
+            base_price = 0.505 + (rng.random() * 0.015)   # 0.505 to 0.52
+
+        spread = 0.01 + (rng.random() * 0.005)  # 0.01 to 0.015
+
+        # Create order level class with price/size attributes (like real API)
+        class MockLevel:
+            def __init__(self, price, size):
+                self.price = str(price)
+                self.size = str(size)
+
+        # Create order book structure similar to real API (with object attributes)
+        class MockOrderBook:
+            def __init__(self, base, spread, rng):
+                self.bids = [
+                    MockLevel(round(base - spread/2 - i*0.005, 4), rng.randint(50, 200))
+                    for i in range(5)
+                ]
+                self.asks = [
+                    MockLevel(round(base + spread/2 + i*0.005, 4), rng.randint(50, 200))
+                    for i in range(5)
+                ]
+
+        return MockOrderBook(base_price, spread, rng)
+
+
+_cached_client = None
+_is_mock_client = False
+
+def get_client(settings: Settings):
+    global _cached_client, _is_mock_client
+
     if _cached_client is not None:
         return _cached_client
-    
+
+    # Use mock client for paper trading
+    if settings.dry_run:
+        _cached_client = MockClobClient(sim_balance=settings.sim_balance)
+        _is_mock_client = True
+        return _cached_client
+
     if not settings.private_key:
         raise RuntimeError("POLYMARKET_PRIVATE_KEY is required for trading")
-    
+
     host = "https://clob.polymarket.com"
-    
+
     # Create client with signature_type=1 for Magic/Email accounts
     _cached_client = ClobClient(
-        host, 
-        key=settings.private_key.strip(), 
-        chain_id=137, 
-        signature_type=settings.signature_type, 
+        host,
+        key=settings.private_key.strip(),
+        chain_id=137,
+        signature_type=settings.signature_type,
         funder=settings.funder.strip() if settings.funder else None
     )
-    
+
     # Derive API credentials - simple method that works
     logger.info("Deriving User API credentials from private key...")
     derived_creds = _cached_client.create_or_derive_api_creds()
     _cached_client.set_api_creds(derived_creds)
-    
-    logger.info("✅ API credentials configured")
+
+    logger.info("API credentials configured")
     logger.info(f"   API Key: {derived_creds.api_key}")
     logger.info(f"   Wallet: {_cached_client.get_address()}")
     logger.info(f"   Funder: {settings.funder}")
-    
+    _is_mock_client = False
+
     return _cached_client
 
 

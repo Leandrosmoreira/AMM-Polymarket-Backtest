@@ -105,23 +105,51 @@ class SimpleArbitrageBot:
             self.risk_manager = RiskManager(risk_limits)
         
         # Try to find current BTC 15min market automatically
-        try:
-            market_slug = find_current_btc_15min_market()
-        except Exception as e:
-            # Fallback: use the slug configured in .env
-            if settings.market_slug:
-                logger.info(f"Using configured market: {settings.market_slug}")
-                market_slug = settings.market_slug
-            else:
-                raise RuntimeError("Could not find BTC 15min market and no slug configured in .env")
-        
+        # In dry_run (paper trading) mode, use simulated market if network fails
+        market_slug = None
+        use_simulated_market = False
+
+        if not settings.dry_run:
+            # Live mode - must find real market
+            try:
+                market_slug = find_current_btc_15min_market()
+            except Exception as e:
+                if settings.market_slug:
+                    logger.info(f"Using configured market: {settings.market_slug}")
+                    market_slug = settings.market_slug
+                else:
+                    raise RuntimeError("Could not find BTC 15min market and no slug configured in .env")
+        else:
+            # Paper trading mode - try real market first, fall back to simulation
+            try:
+                market_slug = find_current_btc_15min_market()
+            except Exception as e:
+                if settings.market_slug:
+                    logger.info(f"Using configured market: {settings.market_slug}")
+                    market_slug = settings.market_slug
+                else:
+                    logger.info("Network unavailable - using simulated market for paper trading")
+                    use_simulated_market = True
+                    # Create simulated market starting now
+                    import time as time_module
+                    sim_start = int(time_module.time())
+                    market_slug = f"btc-updown-15m-{sim_start}"
+
         # Get token IDs from the market
-        logger.info(f"Getting market information: {market_slug}")
-        market_info = fetch_market_from_slug(market_slug)
-        
-        self.market_id = market_info["market_id"]
-        self.yes_token_id = market_info["yes_token_id"]
-        self.no_token_id = market_info["no_token_id"]
+        if use_simulated_market:
+            # Simulated market data for paper trading
+            logger.info(f"Using SIMULATED market: {market_slug}")
+            self.market_id = f"SIMULATED_{market_slug}"
+            self.yes_token_id = "SIMULATED_YES_TOKEN"
+            self.no_token_id = "SIMULATED_NO_TOKEN"
+            self._simulated_market = True
+        else:
+            logger.info(f"Getting market information: {market_slug}")
+            market_info = fetch_market_from_slug(market_slug)
+            self.market_id = market_info["market_id"]
+            self.yes_token_id = market_info["yes_token_id"]
+            self.no_token_id = market_info["no_token_id"]
+            self._simulated_market = False
         
         logger.info(f"Market ID: {self.market_id}")
         logger.info(f"UP Token (YES): {self.yes_token_id}")

@@ -27,22 +27,24 @@ class ConfigValidator:
             Tuple of (is_valid, list_of_errors)
         """
         errors = []
-        
-        # Required fields
-        if not settings.private_key:
-            errors.append("POLYMARKET_PRIVATE_KEY is required")
-        elif not settings.private_key.startswith("0x"):
-            errors.append("POLYMARKET_PRIVATE_KEY must start with '0x'")
-        elif len(settings.private_key) < 64:
-            errors.append("POLYMARKET_PRIVATE_KEY appears to be invalid (too short)")
-        
-        # Signature type validation
-        if settings.signature_type not in [0, 1, 2]:
-            errors.append("POLYMARKET_SIGNATURE_TYPE must be 0 (EOA), 1 (Magic.link), or 2 (Gnosis Safe)")
-        
-        # Magic.link requires funder
-        if settings.signature_type == 1 and not settings.funder:
-            errors.append("POLYMARKET_FUNDER is required when POLYMARKET_SIGNATURE_TYPE=1 (Magic.link)")
+
+        # API credentials are only required in live mode (not dry_run)
+        if not settings.dry_run:
+            # Required fields
+            if not settings.private_key:
+                errors.append("POLYMARKET_PRIVATE_KEY is required")
+            elif not settings.private_key.startswith("0x"):
+                errors.append("POLYMARKET_PRIVATE_KEY must start with '0x'")
+            elif len(settings.private_key) < 64:
+                errors.append("POLYMARKET_PRIVATE_KEY appears to be invalid (too short)")
+
+            # Signature type validation
+            if settings.signature_type not in [0, 1, 2]:
+                errors.append("POLYMARKET_SIGNATURE_TYPE must be 0 (EOA), 1 (Magic.link), or 2 (Gnosis Safe)")
+
+            # Magic.link requires funder
+            if settings.signature_type == 1 and not settings.funder:
+                errors.append("POLYMARKET_FUNDER is required when POLYMARKET_SIGNATURE_TYPE=1 (Magic.link)")
         
         # Trading parameters
         if settings.target_pair_cost <= 0 or settings.target_pair_cost >= 1.0:
