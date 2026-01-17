@@ -32,6 +32,7 @@ from .trading import (
 )
 from .utils import GracefulShutdown
 from .wss_market import MarketWssClient
+from .fast_logger import FastTradeLogger
 
 # Logger will be set up in main() after settings are loaded
 logger = logging.getLogger(__name__)
@@ -195,7 +196,11 @@ class SimpleArbitrageBot:
                 logger.info("LTM (Liquidity Time Model) enabled")
             except Exception as e:
                 logger.warning(f"Failed to initialize LTM adapter: {e}")
-    
+
+        # Fast CSV logger for backtest data (non-blocking)
+        self.fast_logger = FastTradeLogger(log_dir="logs", buffer_size=10, flush_interval=5.0)
+        logger.info(f"Fast logger enabled: {self.fast_logger.trades_file}")
+
     def get_time_remaining(self) -> str:
         """Get remaining time until market closes."""
         if not self.market_end_timestamp:
@@ -560,7 +565,22 @@ class SimpleArbitrageBot:
                     order_size=opportunity['order_size'],
                     filled=True,
                 )
-            
+
+            # Fast CSV log for backtest (non-blocking)
+            ltm_bucket = opportunity.get('ltm', {}).get('bucket_index') if 'ltm' in opportunity else None
+            self.fast_logger.log_trade(
+                market=self.market_slug,
+                price_up=opportunity['price_up'],
+                price_down=opportunity['price_down'],
+                pair_cost=opportunity['total_cost'],
+                profit_pct=opportunity['profit_pct'],
+                order_size=opportunity['order_size'],
+                investment=opportunity['total_investment'],
+                expected_profit=opportunity['expected_profit'],
+                balance_after=self.sim_balance,
+                ltm_bucket=ltm_bucket,
+            )
+
             logger.info("=" * 70)
             return
         
@@ -953,6 +973,23 @@ class SimpleArbitrageBot:
                 f"[Time: {time_remaining}]"
             )
 
+            # Fast log scan (non-blocking) - only log every 10th scan to reduce IO
+            if hasattr(self, '_scan_counter'):
+                self._scan_counter += 1
+            else:
+                self._scan_counter = 1
+
+            if self._scan_counter % 10 == 0:
+                time_remaining_sec = self.get_time_remaining_sec()
+                self.fast_logger.log_scan(
+                    market=self.market_slug,
+                    up_ask=price_up,
+                    down_ask=price_down,
+                    pair_cost=best_total,
+                    has_opportunity=False,
+                    time_remaining_sec=time_remaining_sec if time_remaining_sec else 0,
+                )
+
         return False
     
     async def monitor(self, interval_seconds: int = 30):
@@ -1231,7 +1268,15 @@ async def main():
                 if stats.total_actual_profit > 0:
                     logger.info(f"Total actual profit: ${stats.total_actual_profit:.2f}")
                 logger.info("=" * 70)
-        
+
+            # Flush and stop fast logger
+            if hasattr(bot, 'fast_logger'):
+                bot.fast_logger.stop()
+                log_stats = bot.fast_logger.get_stats()
+                logger.info(f"📁 Logs saved: {log_stats['trades_logged']} trades, {log_stats['scans_logged']} scans")
+                logger.info(f"   Trades: {log_stats['trades_file']}")
+                logger.info(f"   Scans:  {log_stats['scans_file']}")
+
         shutdown_handler.register_callback(on_shutdown)
         
         await bot.monitor(interval_seconds=0)  # Scan continuously
