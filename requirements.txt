@@ -23,6 +23,8 @@ scipy>=1.11.0
 # Data storage
 pyarrow>=14.0.0  # For parquet support
 
-# Optional: Jupyter notebooks
-jupyter>=1.0.0
-ipykernel>=6.0.0
+# Trading Bot Dependencies
+py-clob-client>=0.1.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+

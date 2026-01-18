@@ -53,6 +53,85 @@ python -m trading_bot_ltm.market_maker_bot --allow-live
 
 ---
 
+## Instalacao Rapida (VPS/Local)
+
+```bash
+# Clonar repositorio
+git clone https://github.com/Leandrosmoreira/AMM-Polymarket-Backtest.git
+cd AMM-Polymarket-Backtest
+
+# Criar e ativar virtual environment
+python3 -m venv venv
+source venv/bin/activate  # Linux/Mac
+
+# Instalar dependencias
+pip install -r requirements.txt
+
+# Criar arquivo .env para PAPER trading
+cat > trading_bot_ltm/.env << 'EOF'
+DRY_RUN=true
+SIM_BALANCE=1000
+VERBOSE=true
+ORDER_SIZE=50
+EOF
+
+# Executar Bot 2 (Market Maker)
+python -m trading_bot_ltm.market_maker_bot
+```
+
+---
+
+## Logs e Analise de EV (Expected Value)
+
+Os logs sao salvos na pasta `logs/`:
+
+| Arquivo | Conteudo |
+|---------|----------|
+| `logs/trades_*.csv` | Historico de trades |
+| `logs/scans_*.csv` | Scans de mercado |
+| `logs/inventory_snapshots_*.csv` | Snapshots de posicao |
+| `logs/structured_*.jsonl` | Logs estruturados |
+| `logs/bot.log` | Log geral |
+
+### Analisar EV e ROI
+
+Apos rodar o bot por um tempo, analise os resultados:
+
+```bash
+python -m trading_bot_ltm.ev_analysis --log-dir logs/
+```
+
+O relatorio mostra:
+
+- Total de trades
+- ROI %
+- EV por trade
+- Taxa de sucesso
+- Lucro total esperado
+- Melhor/pior trade
+- ROI por mercado (BTC, ETH, SOL)
+
+### Exemplo de output:
+
+```
+============================================================
+              EV ANALYSIS - Paper Trading Report
+============================================================
+Total trades:           150
+Total investment:       $7,500.00
+Expected profit:        $225.00
+ROI:                    3.0%
+EV per trade:           $1.50
+Success rate:           72.3%
+Best trade:             +4.2%
+Worst trade:            -1.1%
+============================================================
+VERDICT: PROFITABLE - ROI positivo de 3.0%
+============================================================
+```
+
+---
+
 ## Backtest Framework
 
 ## Strategy Overview
