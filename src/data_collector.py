@@ -1,5 +1,5 @@
 """
-Data Collector for Polymarket SOL 15-min Markets
+Data Collector for Polymarket 15-min Markets (BTC, ETH, SOL)
 Collects historical market data and price history from Polymarket API
 """
 
@@ -17,6 +17,9 @@ from config import settings
 
 logging.basicConfig(level=settings.LOG_LEVEL, format=settings.LOG_FORMAT)
 logger = logging.getLogger(__name__)
+
+# Supported assets
+SUPPORTED_ASSETS = ['btc', 'eth', 'sol']
 
 
 class DataCollector:
@@ -37,16 +40,18 @@ class DataCollector:
             time.sleep(wait_time)
         self.last_request_time = time.time()
 
-    def fetch_sol_15min_markets(
+    def fetch_15min_markets(
         self,
+        asset: str,
         start_date: str,
         end_date: str,
         save_path: Optional[str] = None
     ) -> pd.DataFrame:
         """
-        Fetch all SOL Up/Down 15-minute markets in the date range.
+        Fetch all Up/Down 15-minute markets for an asset in the date range.
 
         Args:
+            asset: Asset to fetch (btc, eth, sol)
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
             save_path: Optional path to save CSV
@@ -54,21 +59,24 @@ class DataCollector:
         Returns:
             DataFrame with market information
         """
-        logger.info(f"Fetching SOL 15-min markets from {start_date} to {end_date}")
+        asset = asset.lower()
+        asset_upper = asset.upper()
+
+        logger.info(f"Fetching {asset_upper} 15-min markets from {start_date} to {end_date}")
 
         all_markets = []
         offset = 0
         page = 0
         max_pages = 100  # Safety limit
 
-        # Try different search strategies
+        # Updated search strategies with correct slug format
         search_params_list = [
-            # Strategy 1: Search by slug containing sol-updown
-            {"slug_contains": "sol-updown", "closed": "true", "limit": 100},
-            # Strategy 2: Search by tag
+            # Strategy 1: Search by slug containing {asset}-updown-15m (formato atual)
+            {"slug_contains": f"{asset}-updown-15m", "closed": "true", "limit": 100},
+            # Strategy 2: Search by slug containing {asset}-updown (formato antigo)
+            {"slug_contains": f"{asset}-updown", "closed": "true", "limit": 100},
+            # Strategy 3: Search by tag crypto
             {"tag": "crypto", "closed": "true", "limit": 100},
-            # Strategy 3: No filter, get all closed markets
-            {"closed": "true", "limit": 100},
         ]
 
         for search_params in search_params_list:
@@ -109,18 +117,22 @@ class DataCollector:
                     logger.debug(f"Sample question: {sample.get('question', 'N/A')[:100]}")
                     logger.debug(f"Sample slug: {sample.get('slug', 'N/A')}")
 
-                # Filter for SOL Up/Down 15-min markets
+                # Filter for asset Up/Down 15-min markets
                 for market in markets:
                     question = (market.get("question") or "").lower()
                     slug = (market.get("slug") or "").lower()
                     description = (market.get("description") or "").lower()
 
-                    # Check if it's a SOL market
-                    is_sol = any([
-                        "solana" in question,
-                        "sol " in question,
-                        "sol-" in slug,
-                        "solana" in slug,
+                    # Check if it's the correct asset market
+                    asset_names = {
+                        'btc': ['bitcoin', 'btc ', 'btc-'],
+                        'eth': ['ethereum', 'eth ', 'eth-', 'ether'],
+                        'sol': ['solana', 'sol ', 'sol-'],
+                    }
+
+                    is_asset = any([
+                        name in question or name in slug
+                        for name in asset_names.get(asset, [])
                     ])
 
                     # Check if it's up/down market
@@ -143,20 +155,20 @@ class DataCollector:
                         ":45-" in question and ":00" in question,
                     ])
 
-                    if is_sol and is_updown:
-                        market_data = self._parse_market(market)
+                    if is_asset and is_updown:
+                        market_data = self._parse_market(market, asset)
                         if market_data:
                             # Check if not duplicate
                             if not any(m['market_id'] == market_data['market_id'] for m in all_markets):
                                 all_markets.append(market_data)
                                 if len(all_markets) <= 3:
-                                    logger.info(f"Found market: {market_data['question'][:80]}...")
+                                    logger.info(f"Found {asset_upper} market: {market_data['question'][:80]}...")
 
                 page += 1
                 offset += 100
 
                 if page % 10 == 0:
-                    logger.info(f"Page {page}: Found {len(all_markets)} SOL markets so far")
+                    logger.info(f"Page {page}: Found {len(all_markets)} {asset_upper} markets so far")
 
                 # Stop if we got less than limit (no more pages)
                 if len(markets) < 100:
@@ -179,18 +191,65 @@ class DataCollector:
             # Sort by start time
             df = df.sort_values('start_time').reset_index(drop=True)
 
-            logger.info(f"Total markets found after date filter: {len(df)}")
+            logger.info(f"Total {asset_upper} markets found after date filter: {len(df)}")
 
             if save_path:
                 Path(save_path).parent.mkdir(parents=True, exist_ok=True)
                 df.to_csv(save_path, index=False)
                 logger.info(f"Saved to {save_path}")
         else:
-            logger.warning("No markets found. The API might have changed or no SOL 15-min markets exist.")
+            logger.warning(f"No {asset_upper} markets found. The API might have changed.")
 
         return df
 
-    def _parse_market(self, market: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def fetch_all_assets_markets(
+        self,
+        assets: List[str],
+        start_date: str,
+        end_date: str,
+        save_dir: Optional[str] = None
+    ) -> pd.DataFrame:
+        """
+        Fetch markets for multiple assets.
+
+        Args:
+            assets: List of assets to fetch (e.g., ['btc', 'eth', 'sol'])
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+            save_dir: Optional directory to save CSVs
+
+        Returns:
+            Consolidated DataFrame with all markets
+        """
+        all_markets = []
+
+        for asset in assets:
+            asset = asset.lower()
+            if asset not in SUPPORTED_ASSETS:
+                logger.warning(f"Asset {asset} not supported. Supported: {SUPPORTED_ASSETS}")
+                continue
+
+            save_path = None
+            if save_dir:
+                save_path = f"{save_dir}/{asset}_markets.csv"
+
+            df = self.fetch_15min_markets(asset, start_date, end_date, save_path)
+            if not df.empty:
+                all_markets.append(df)
+
+        if all_markets:
+            consolidated = pd.concat(all_markets, ignore_index=True)
+            consolidated = consolidated.sort_values('start_time').reset_index(drop=True)
+
+            if save_dir:
+                consolidated.to_csv(f"{save_dir}/all_markets.csv", index=False)
+                logger.info(f"Saved consolidated markets to {save_dir}/all_markets.csv")
+
+            return consolidated
+
+        return pd.DataFrame()
+
+    def _parse_market(self, market: Dict[str, Any], asset: str = "") -> Optional[Dict[str, Any]]:
         """Parse market data into standardized format."""
         try:
             tokens = market.get("tokens", [])
@@ -200,7 +259,9 @@ class DataCollector:
             return {
                 "market_id": market.get("id") or market.get("condition_id"),
                 "condition_id": market.get("condition_id"),
+                "asset": asset.upper(),
                 "question": market.get("question"),
+                "slug": market.get("slug"),
                 "start_time": market.get("start_date") or market.get("created_at"),
                 "end_time": market.get("end_date") or market.get("closed_at"),
                 "outcome": market.get("outcome") or market.get("resolution"),
@@ -283,7 +344,8 @@ class DataCollector:
         all_prices = []
 
         for idx, market in markets_df.iterrows():
-            logger.info(f"Fetching prices for market {idx + 1}/{len(markets_df)}")
+            asset = market.get('asset', 'UNKNOWN')
+            logger.info(f"Fetching prices for {asset} market {idx + 1}/{len(markets_df)}")
 
             start_ts = int(pd.to_datetime(market['start_time']).timestamp())
             end_ts = int(pd.to_datetime(market['end_time']).timestamp())
@@ -311,8 +373,9 @@ class DataCollector:
                     how='outer'
                 )
                 prices['market_id'] = market['market_id']
+                prices['asset'] = asset
                 prices['spread'] = prices['price_yes'] + prices['price_no'] - 1.0
-                prices['mid_price'] = (prices['price_yes'] + (1 - prices['price_no'])) / 2
+                prices['mid_price'] = (prices['price_yes'] + prices['price_no']) / 2
 
                 all_prices.append(prices)
 
@@ -327,6 +390,16 @@ class DataCollector:
 
         return pd.DataFrame()
 
+    # Backward compatibility
+    def fetch_sol_15min_markets(
+        self,
+        start_date: str,
+        end_date: str,
+        save_path: Optional[str] = None
+    ) -> pd.DataFrame:
+        """Backward compatible method for fetching SOL markets."""
+        return self.fetch_15min_markets('sol', start_date, end_date, save_path)
+
     def close(self):
         """Close the HTTP client."""
         self.client.close()
@@ -336,10 +409,13 @@ def main():
     """Main function to collect data."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Collect Polymarket SOL data")
-    parser.add_argument("--asset", default="SOL", help="Asset to collect")
+    parser = argparse.ArgumentParser(description="Collect Polymarket 15-min market data")
+    parser.add_argument("--assets", default="btc,eth,sol", help="Assets to collect (comma-separated)")
     parser.add_argument("--days", type=int, default=90, help="Days of history")
+    parser.add_argument("--fetch-prices", action="store_true", help="Also fetch price history")
     args = parser.parse_args()
+
+    assets = [a.strip().lower() for a in args.assets.split(',')]
 
     end_date = datetime.now()
     start_date = end_date - timedelta(days=args.days)
@@ -347,27 +423,40 @@ def main():
     collector = DataCollector()
 
     try:
-        # Fetch markets
-        markets_df = collector.fetch_sol_15min_markets(
+        # Fetch markets for all assets
+        logger.info(f"Collecting data for assets: {', '.join(a.upper() for a in assets)}")
+
+        markets_df = collector.fetch_all_assets_markets(
+            assets=assets,
             start_date=start_date.strftime("%Y-%m-%d"),
             end_date=end_date.strftime("%Y-%m-%d"),
-            save_path=f"{settings.DATA_RAW_PATH}/sol_markets.csv"
+            save_dir=settings.DATA_RAW_PATH
         )
 
         if not markets_df.empty:
-            # Fetch prices
-            prices_df = collector.fetch_all_prices(
-                markets_df,
-                save_dir=f"{settings.DATA_RAW_PATH}/price_history"
-            )
+            logger.info(f"Found {len(markets_df)} total markets")
 
-            if not prices_df.empty:
-                # Save consolidated prices
-                prices_df.to_parquet(
-                    f"{settings.DATA_PROCESSED_PATH}/all_prices.parquet",
-                    index=False
+            # Show breakdown by asset
+            for asset in assets:
+                count = len(markets_df[markets_df['asset'] == asset.upper()])
+                logger.info(f"  {asset.upper()}: {count} markets")
+
+            if args.fetch_prices:
+                # Fetch prices
+                prices_df = collector.fetch_all_prices(
+                    markets_df,
+                    save_dir=f"{settings.DATA_RAW_PATH}/price_history"
                 )
-                logger.info("Data collection complete!")
+
+                if not prices_df.empty:
+                    # Save consolidated prices
+                    prices_df.to_parquet(
+                        f"{settings.DATA_PROCESSED_PATH}/all_prices.parquet",
+                        index=False
+                    )
+                    logger.info("Data collection complete!")
+        else:
+            logger.warning("No markets found for any asset.")
 
     finally:
         collector.close()
