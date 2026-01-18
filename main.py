@@ -39,33 +39,46 @@ def collect_data(args):
     end_date = datetime.now()
     start_date = end_date - timedelta(days=args.days)
 
+    # Parse assets
+    assets = [a.strip().lower() for a in args.assets.split(',')]
+    logger.info(f"Collecting data for assets: {', '.join(a.upper() for a in assets)}")
+
     collector = DataCollector()
 
     try:
-        # Fetch markets
-        markets_df = collector.fetch_sol_15min_markets(
+        # Fetch markets for all assets
+        markets_df = collector.fetch_all_assets_markets(
+            assets=assets,
             start_date=start_date.strftime("%Y-%m-%d"),
             end_date=end_date.strftime("%Y-%m-%d"),
-            save_path=f"{settings.DATA_RAW_PATH}/sol_markets.csv"
+            save_dir=settings.DATA_RAW_PATH
         )
 
-        logger.info(f"Found {len(markets_df)} markets")
+        if not markets_df.empty:
+            logger.info(f"Found {len(markets_df)} total markets")
 
-        if not markets_df.empty and args.fetch_prices:
-            # Fetch prices
-            prices_df = collector.fetch_all_prices(
-                markets_df,
-                save_dir=f"{settings.DATA_RAW_PATH}/price_history"
-            )
+            # Show breakdown by asset
+            for asset in assets:
+                count = len(markets_df[markets_df['asset'] == asset.upper()])
+                logger.info(f"  {asset.upper()}: {count} markets")
 
-            if not prices_df.empty:
-                # Save consolidated prices
-                Path(settings.DATA_PROCESSED_PATH).mkdir(parents=True, exist_ok=True)
-                prices_df.to_parquet(
-                    f"{settings.DATA_PROCESSED_PATH}/all_prices.parquet",
-                    index=False
+            if args.fetch_prices:
+                # Fetch prices
+                prices_df = collector.fetch_all_prices(
+                    markets_df,
+                    save_dir=f"{settings.DATA_RAW_PATH}/price_history"
                 )
-                logger.info(f"Saved {len(prices_df)} price records")
+
+                if not prices_df.empty:
+                    # Save consolidated prices
+                    Path(settings.DATA_PROCESSED_PATH).mkdir(parents=True, exist_ok=True)
+                    prices_df.to_parquet(
+                        f"{settings.DATA_PROCESSED_PATH}/all_prices.parquet",
+                        index=False
+                    )
+                    logger.info(f"Saved {len(prices_df)} price records")
+        else:
+            logger.warning("No markets found for any asset.")
 
         logger.info("Data collection complete!")
 
@@ -250,6 +263,7 @@ def main():
 
     # Collect command
     collect_parser = subparsers.add_parser('collect', help='Collect market data')
+    collect_parser.add_argument('--assets', type=str, default='btc,eth,sol', help='Assets to collect (comma-separated: btc,eth,sol)')
     collect_parser.add_argument('--days', type=int, default=90, help='Days of history')
     collect_parser.add_argument('--fetch-prices', action='store_true', help='Also fetch price history')
 
