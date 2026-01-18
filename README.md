@@ -1,6 +1,59 @@
-# AMM Delta-Neutral Strategy Backtest
+# AMM Delta-Neutral Strategy - Backtest & Trading Bots
 
-Backtest framework for AMM Delta-Neutral Strategy on Polymarket SOL 15-min Markets.
+Sistema completo para backtest e trading em tempo real de estrategias delta-neutral em mercados Polymarket.
+
+## Componentes
+
+| Componente | Diretorio | Descricao |
+|------------|-----------|-----------|
+| **Backtest Framework** | `src/` | Simulacao historica de estrategias |
+| **Bot 1 - Arbitragem** | `trading_bot_ltm/simple_arb_bot.py` | Compra YES+NO quando spread < $1.00 |
+| **Bot 2 - Market Maker** | `trading_bot_ltm/market_maker_bot.py` | Cria liquidez com bid/ask |
+
+---
+
+## Trading Bots em Tempo Real
+
+### Configuracao
+
+```bash
+# Copie o arquivo de configuracao
+cp trading_bot_ltm/.env.example trading_bot_ltm/.env
+
+# Edite com suas credenciais
+nano trading_bot_ltm/.env
+```
+
+### Modo PAPER (Simulacao)
+
+```bash
+# Configurar .env
+DRY_RUN=true
+SIM_BALANCE=1000
+VERBOSE=true
+
+# Executar Bot 2 (Market Maker)
+python -m trading_bot_ltm.market_maker_bot
+```
+
+### Modo LIVE (Capital Real)
+
+```bash
+# Configurar .env
+DRY_RUN=false
+POLYMARKET_PRIVATE_KEY=sua_chave_privada
+MAX_DAILY_LOSS=50
+MAX_POSITION_SIZE=100
+
+# Executar com flag de seguranca
+python -m trading_bot_ltm.market_maker_bot --allow-live
+```
+
+**Atencao:** O modo LIVE requer a flag `--allow-live` como medida de seguranca.
+
+---
+
+## Backtest Framework
 
 ## Strategy Overview
 

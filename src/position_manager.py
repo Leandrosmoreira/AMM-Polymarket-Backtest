@@ -28,8 +28,8 @@ class MarketState:
 
     @property
     def mid_price(self) -> float:
-        """Calculate mid price."""
-        return (self.price_yes + (1 - self.price_no)) / 2
+        """Calculate mid price (average of YES and NO prices)."""
+        return (self.price_yes + self.price_no) / 2
 
 
 @dataclass
