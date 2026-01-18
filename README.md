@@ -110,24 +110,59 @@ O relatorio mostra:
 - Lucro total esperado
 - Melhor/pior trade
 - ROI por mercado (BTC, ETH, SOL)
+- Metricas de Market Maker (spread capturado, lucro por trade)
+- Analise de inventory por mercado
 
 ### Exemplo de output:
 
 ```
 ============================================================
-              EV ANALYSIS - Paper Trading Report
+    BOT EV ANALYSIS SUMMARY
 ============================================================
-Total trades:           150
-Total investment:       $7,500.00
-Expected profit:        $225.00
-ROI:                    3.0%
-EV per trade:           $1.50
-Success rate:           72.3%
-Best trade:             +4.2%
-Worst trade:            -1.1%
+
+    Total Trades:                6
+    Total Investment:       $    184.35
+    Total Expected Profit:  $      2.91
+
+    EV per Trade:           $    0.4850
+    ROI:                           1.58%
+    Average Profit %:             0.00%
+
+    Best Trade:                   0.00% profit
+    Worst Trade:                  0.00% profit
+
+    Scans Logged:                0
+    Opportunity Rate:              0.0%
+
+    BALANCE KPI:
+    --------------------------------------------------------
+    Initial Balance:        $   1843.50
+    Total Profit:           $      2.91
+    Current Balance:        $   1843.50
 ============================================================
-VERDICT: PROFITABLE - ROI positivo de 3.0%
+
+    MARKET MAKER METRICS:
+    --------------------------------------------------------
+    Spread Captured:        $    0.0161 per trade
+    Profit per Trade:       $      0.49
+    Success Rate:                100.0%
+
+    ROI BY MARKET:
+    --------------------------------------------------------
+    Market 1207131:               3.21%
+    Market 1207133:               3.21%
+    Market 1207135:               3.21%
+
+    INVENTORY ANALYSIS:
+    --------------------------------------------------------
+    Total Inventory Value:      $      0.00
+    Total Unrealized PnL:       $      0.00
+    Avg Inventory Risk:               0.00
+
 ============================================================
+
+POSITIVE EV - Bot is profitable!
+Expected to make $0.49 per trade on average.
 ```
 
 ---
