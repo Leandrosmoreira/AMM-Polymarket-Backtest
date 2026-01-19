@@ -11,6 +11,10 @@ Diferente do Bot 1 (arbitragem), este bot:
 Usage:
     python -m trading_bot_ltm.market_maker
 """
+# Performance optimizations (uvloop + orjson)
+from .performance import setup_performance, fast_json_loads, fast_json_dumps
+setup_performance()
+
 import asyncio
 import logging
 import time
