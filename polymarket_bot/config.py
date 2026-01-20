@@ -124,6 +124,14 @@ class Settings:
         """Get list of assets to monitor."""
         return [a.strip().lower() for a in self.assets.split(",") if a.strip()]
 
+    # ========================================
+    # MARKET MAKER (Bot 2) PARAMETERS
+    # ========================================
+    mm_base_spread: float = field(default_factory=lambda: float(os.getenv("MM_BASE_SPREAD", "0.02")))
+    mm_max_position: float = field(default_factory=lambda: float(os.getenv("MM_MAX_POSITION", "100")))
+    mm_requote_threshold: float = field(default_factory=lambda: float(os.getenv("MM_REQUOTE_THRESHOLD", "0.005")))
+    mm_requote_interval: float = field(default_factory=lambda: float(os.getenv("MM_REQUOTE_INTERVAL", "5.0")))
+
     def validate(self) -> tuple[bool, list[str]]:
         """
         Validate settings.
