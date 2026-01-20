@@ -113,6 +113,17 @@ class Settings:
     ltm_policy_path: str = field(default_factory=lambda: os.getenv("LTM_POLICY_PATH", "ltm_policy.yaml"))
     ltm_use_decay: bool = field(default_factory=lambda: os.getenv("LTM_USE_DECAY", "true").lower() == "true")
 
+    # ========================================
+    # MULTI-MARKET (BTC, ETH, SOL)
+    # ========================================
+    # Comma-separated list of assets to monitor: btc,eth,sol
+    assets: str = field(default_factory=lambda: os.getenv("ASSETS", "btc,eth,sol"))
+
+    @property
+    def asset_list(self) -> list[str]:
+        """Get list of assets to monitor."""
+        return [a.strip().lower() for a in self.assets.split(",") if a.strip()]
+
     def validate(self) -> tuple[bool, list[str]]:
         """
         Validate settings.
@@ -165,6 +176,9 @@ class Settings:
         print(f"  SIM_BALANCE:      ${self.sim_balance}")
         print(f"  USE_WSS:          {self.use_wss}")
         print(f"  USE_LTM:          {self.use_ltm}")
+
+        print("\n[Markets]")
+        print(f"  ASSETS:           {', '.join(a.upper() for a in self.asset_list)}")
 
         print("=" * 60)
 
